@@ -614,6 +614,112 @@ async def rob_start(call: CallbackQuery) -> None:
     await _show_target_choice(call, rid, vid)
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith("rob_back_"))
+async def rob_back(call: CallbackQuery) -> None:
+    await _safe_answer(call)
+    _set_bot_ref(call.bot)
+    parts = call.data.split("_")
+    rid, vid = int(parts[2]), int(parts[3])
+    if not _check_robber(call, rid):
+        return
+    iid = call.inline_message_id
+
+    sess = _robbery_sessions.get(iid)
+    if not sess:
+        await _safe_edit_text(call.bot, inline_message_id=iid,
+            text="❌ <b>Сессия ограбления истекла.</b>", parse_mode="HTML")
+        return
+
+    _reset_timer(iid, rid, vid)
+    await _show_back_to_targets(call, rid, vid)
+
+
+async def _show_back_to_targets(call, robber_id, victim_id):
+    iid = call.inline_message_id
+    db = get_db()
+    async for session in db.get_session():
+        try:
+            rr = await session.execute(select(User).where(User.tg_id == robber_id))
+            robber = rr.scalar_one_or_none()
+            vr = await session.execute(select(User).where(User.tg_id == victim_id))
+            victim = vr.scalar_one_or_none()
+            if not robber or not victim:
+                _cleanup_session(iid, robber_id, victim_id)
+                return
+
+            if robber.jail_until and robber.jail_until > datetime.utcnow():
+                mins = max(1, int((robber.jail_until - datetime.utcnow()).total_seconds() // 60))
+                has_law, law_count = await _has_lawyer(session, robber_id)
+                btns = []
+                if has_law:
+                    btns.append([InlineKeyboardButton(
+                        text=f"💼 Адвокат ({law_count} шт.) — Освободиться",
+                        callback_data=f"rob_lawyer_{robber_id}_{victim_id}")])
+                await _safe_edit_text(
+                    call.bot, inline_message_id=iid,
+                    text=(
+                        f"🔒 <b>Вы в тюрьме!</b>\n\n"
+                        f"⏳ Осталось: <b>{mins} мин</b>\n\n"
+                        + ("💼 <i>Адвокат может вытащить вас прямо сейчас!</i>" if has_law
+                           else "❌ <i>Адвоката нет. Ждите или купите в /shop.</i>")
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=btns) if btns else None)
+                return
+
+            if robber.balance_vv < MIN_BALANCE_TO_ROB:
+                await _safe_edit_text(
+                    call.bot, inline_message_id=iid,
+                    text=(
+                        f"❌ <b>Минимум {MIN_BALANCE_TO_ROB} 🪙 для ограбления!</b>\n\n"
+                        f"💼 Ваш баланс: <b>{robber.balance_vv:,} 🪙</b>"
+                    ),
+                    parse_mode="HTML")
+                return
+
+            v_name = _display_name(victim)
+
+            btns = []
+            wallet_amount = victim.balance_vv
+            btns.append([InlineKeyboardButton(
+                text=f"👤 Личный баланс ({wallet_amount:,} 🪙)",
+                callback_data=f"rob_wallet_{robber_id}_{victim_id}")])
+
+            if victim.has_active_safe():
+                se = "🏦" if victim.safe_type == "elite" else "🧰"
+                sn = "Элитный" if victim.safe_type == "elite" else "Ржавый"
+                safe_items = len(victim.hidden_item_ids) if victim.hidden_item_ids else 0
+                safe_coins = victim.hidden_coins or 0
+                level = victim.get_safe_level()
+                btns.append([InlineKeyboardButton(
+                    text=f"📦 {se} {sn} ур.{level} ({safe_items} генов, {safe_coins:,} 🪙)",
+                    callback_data=f"rob_safe_target_{robber_id}_{victim_id}")])
+
+            vi_r = await session.execute(select(Inventory).where(Inventory.user_id == victim_id))
+            vi_items = vi_r.scalars().all()
+            gene_items = [inv for inv in vi_items if inv.item.drop_chance > 0 and inv.quantity > 0]
+            total_genes = sum(inv.quantity for inv in gene_items)
+            if total_genes > 0:
+                genes_value = sum(inv.item.price * inv.quantity for inv in gene_items)
+                btns.append([InlineKeyboardButton(
+                    text=f"🧬 Инвентарь ({total_genes} генов, ≈{genes_value:,} 🪙)",
+                    callback_data=f"rob_genes_{robber_id}_{victim_id}")])
+
+            btns.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"rob_cancel_{robber_id}_{victim_id}")])
+
+            timer_note = f"\n\n⏱ <i>{INACTIVITY_TIMEOUT_SECONDS} сек на действие, иначе штраф {INACTIVITY_PENALTY} 🪙</i>"
+
+            await _safe_edit_text(
+                call.bot, inline_message_id=iid,
+                text=f"🔍 <b>{v_name}</b>\n\n<b>Выберите цель ограбления:</b>{timer_note}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
+        except Exception as e:
+            logger.error(f"❌ rob_back: {e}", exc_info=True)
+        finally:
+            await session.close()
+
+
 async def _show_target_choice(call, robber_id, victim_id):
     iid = call.inline_message_id
     db = get_db()
@@ -890,7 +996,7 @@ async def rob_wallet_percent(call: CallbackQuery) -> None:
             if robber.hidden_coins and robber.hidden_coins > 0:
                 safe_note = f"\n🔐 В сейфе: <b>{robber.hidden_coins:,} 🪙</b>"
 
-            btns.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"rob_start_{rid}_{vid}")])
+            btns.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"rob_back_{rid}_{vid}")])
             btns.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"rob_cancel_{rid}_{vid}")])
 
             small_target_warning = ""
@@ -1184,7 +1290,7 @@ async def rob_genes_list(call: CallbackQuery) -> None:
                         text=f"❌ {item.name} — нет денег на залог ({bail_needed:,}🪙)",
                         callback_data="noop")])
 
-            btns.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"rob_start_{rid}_{vid}")])
+            btns.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"rob_back_{rid}_{vid}")])
             btns.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"rob_cancel_{rid}_{vid}")])
 
             safe_note = ""
@@ -1499,7 +1605,7 @@ async def rob_safe_recon(call: CallbackQuery) -> None:
                 btns.append([InlineKeyboardButton(
                     text=f"🔨 Лом ({crowbar_chance:.0f}%)",
                     callback_data=f"rob_crowbar_{rid}_{vid}")])
-            btns.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"rob_start_{rid}_{vid}")])
+            btns.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"rob_back_{rid}_{vid}")])
             btns.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"rob_cancel_{rid}_{vid}")])
             await _safe_edit_text(
                 call.bot, inline_message_id=iid,
