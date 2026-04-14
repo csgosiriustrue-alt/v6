@@ -299,7 +299,6 @@ async def casino_inline_handler(inline_query: InlineQuery) -> None:
         await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
         return
 
-    chat_id = _user_chat_map.get(user_id, 0)
     result_id = f"casino_{user_id}_{bet}"
     result = InlineQueryResultArticle(
         id=result_id, title=f"🎰 Казино — ставка {bet:,} 🪙",
@@ -307,7 +306,7 @@ async def casino_inline_handler(inline_query: InlineQuery) -> None:
         input_message_content=InputTextMessageContent(
             message_text=f"🎰 <b>{user_first_name}</b> ставит <b>{bet:,} 🪙</b>!\n\nНажми кнопку 👇",
             parse_mode="HTML"),
-        reply_markup=get_casino_keyboard(bet, owner_id=user_id, chat_id=chat_id))
+        reply_markup=get_casino_keyboard(bet, owner_id=user_id, chat_id=0))
     _pending_casino[result_id] = {"user_id": user_id, "bet": bet, "user_first_name": user_first_name}
     await inline_query.bot.answer_inline_query(inline_query.id, [result], cache_time=1, is_personal=True)
 
@@ -323,15 +322,7 @@ async def casino_chosen_result(chosen: ChosenInlineResult) -> None:
     inline_message_id = chosen.inline_message_id
     if not inline_message_id:
         return
-    chat_id = _user_chat_map.get(user_id, 0)
-    if chat_id:
-        _inline_chat_map[inline_message_id] = chat_id
-        try:
-            await chosen.bot.edit_message_reply_markup(inline_message_id=inline_message_id,
-                reply_markup=get_casino_keyboard(info["bet"], owner_id=user_id, chat_id=chat_id))
-        except Exception:
-            pass
-    logger.info(f"🎰 Chosen: {rid}, chat={chat_id}")
+    logger.info(f"🎰 Chosen: {rid}")
 
 
 # ============================================================================
@@ -357,28 +348,28 @@ async def casino_spin_handler(call: CallbackQuery) -> None:
         return
 
     # ══════════════════════════════════════════════════════════════════
-    # ИСПРАВЛЕНО: строгая цепочка определения chat_id
-    # 1. Из callback_data (кнопка содержит chat_id)
-    # 2. Из _inline_chat_map (сохранено при chosen_result)
-    # 3. Из call.message.chat (если callback из группы, не инлайн)
-    # 4. Последний фоллбэк — из БД ChatActivity
+    # Цепочка определения chat_id (от наиболее надёжного к запасному)
+    # 1. call.message.chat — надёжный источник для не-инлайн callback
+    # 2. _inline_chat_map  — если был сохранён ранее (надёжный маппинг)
+    # 3. chat_id_from_button — из callback_data, только если != 0
+    # 4. БД ChatActivity   — последний фоллбэк
     #
     # НЕ используем _user_chat_map — он может указывать на другой чат!
     # ══════════════════════════════════════════════════════════════════
     chat_id = None
 
-    # Шаг 1: из callback_data
-    if chat_id_from_button and chat_id_from_button != 0:
-        chat_id = chat_id_from_button
+    # Шаг 1: из call.message.chat (обычный callback в группе — самый надёжный)
+    if call.message and call.message.chat:
+        if call.message.chat.type in ("group", "supergroup"):
+            chat_id = call.message.chat.id
 
     # Шаг 2: из _inline_chat_map (привязан к конкретному inline_message_id)
     if not chat_id and inline_id and inline_id in _inline_chat_map:
         chat_id = _inline_chat_map[inline_id]
 
-    # Шаг 3: из call.message.chat (обычный callback в группе)
-    if not chat_id and call.message and call.message.chat:
-        if call.message.chat.type in ("group", "supergroup"):
-            chat_id = call.message.chat.id
+    # Шаг 3: из callback_data (только если явно задан, т.е. != 0)
+    if not chat_id and chat_id_from_button and chat_id_from_button != 0:
+        chat_id = chat_id_from_button
 
     # Шаг 4: последний фоллбэк — из БД (НЕ из _user_chat_map!)
     if not chat_id:
