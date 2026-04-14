@@ -117,7 +117,7 @@ async def grant_level_rewards(bot, session, user, old_level: int, new_levels: li
     Для «Элитный Сейф» — активирует сейф через activate_safe, а не добавляет в инвентарь.
     """
     from level_rewards import LEVEL_REWARDS
-    from models import Item
+    from models import Item, MAX_BOX_COUNT
     from utils.inventory_helpers import add_item_to_inventory, activate_safe
 
     levels_with_rewards = [lvl for lvl in new_levels if lvl in LEVEL_REWARDS]
@@ -139,6 +139,12 @@ async def grant_level_rewards(bot, session, user, old_level: int, new_levels: li
                 lines.append(f"🏦 Элитный Сейф × {count}")
                 continue
 
+            # Специальная обработка для Заряда теребления — начисляем напрямую в box_count
+            if item_name == "Заряд теребления":
+                user.box_count += count  # Бонус за уровень не пропадает, лимит не применяется
+                lines.append(f"⚡ Заряд теребления × {count}")
+                continue
+
             # Обычные предметы — добавляем в инвентарь
             item_r = await session.execute(select(Item).where(Item.name == item_name))
             item = item_r.scalar_one_or_none()
@@ -157,6 +163,13 @@ async def grant_level_rewards(bot, session, user, old_level: int, new_levels: li
         return
 
     # Формируем красивое ЛС
+    # Проверяем, были ли начислены заряды теребления
+    charges_awarded = sum(
+        LEVEL_REWARDS[lvl].get("Заряд теребления", 0)
+        for lvl in levels_with_rewards
+        if lvl in level_lines
+    )
+
     if len(level_lines) == 1:
         level = next(iter(level_lines))
         items_text = "\n".join(f"  • {line}" for line in level_lines[level])
@@ -172,6 +185,9 @@ async def grant_level_rewards(bot, session, user, old_level: int, new_levels: li
             parts.append(f"\n🏆 <b>Уровень {level}:</b>\n{items_text}")
         parts.append("\nПродолжайте в том же духе! 💪")
         text = "\n".join(parts)
+
+    if charges_awarded:
+        text += f"\n\n⚡ Вам начислен(ы) заряд(ы) теребления за новый уровень! (Текущий запас: {user.box_count}/{MAX_BOX_COUNT})"
 
     try:
         await bot.send_message(chat_id=user.tg_id, text=text, parse_mode="HTML")
