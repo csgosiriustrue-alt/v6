@@ -252,7 +252,7 @@ async def activate_boost(session: AsyncSession, user: User, item_name: str) -> t
         return True, "🫦 Кукла активирована! x2 шанс топ-тир на 24ч."
     elif item_name == "Путана":
         user.putana_until = now + duration
-        return True, "💋 Путана активирована! x5 шанс топ-тир на 24ч."
+        return True, "💋 Путана активирована! x7 шанс редких, эпик и легенд. генов на 24ч."
     return False, "Неизвестный буст"
 
 

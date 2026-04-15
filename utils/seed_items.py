@@ -79,7 +79,7 @@ BOOST_ITEMS = [
     ("Резиновая кукла",     "🫦", 2_500, 5,  RarityEnum.EPIC,      3, 3,
      "Шанс топ-тир + легенд x2 на 24ч."),
     ("Путана",              "💋", 5_069, 20, RarityEnum.LEGENDARY,  2, 2,
-     "Шанс топ-тир + легенд x5 на 24ч."),
+     "Шанс Rare + Epic + Legendary x7 на 24ч."),
 ]
 
 CHARGE_ITEM = ("Заряд теребления", "⚡", 1_000, 3, RarityEnum.COMMON, 6, 15,

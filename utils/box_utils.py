@@ -3,7 +3,7 @@ import random
 from datetime import datetime, timedelta
 from models import MAX_BOX_COUNT, BOX_REFILL_HOURS, RarityEnum
 
-BOOSTED_RARITIES = {RarityEnum.EPIC, RarityEnum.LEGENDARY}
+BOOSTED_RARITIES = {RarityEnum.RARE, RarityEnum.EPIC, RarityEnum.LEGENDARY}
 
 
 async def update_user_boxes(user) -> None:
@@ -46,7 +46,9 @@ def get_time_until_next_box(last_refill_at: datetime, refill_hours: int = BOX_RE
 
 def get_weighted_random_item(items: list, multiplier: float = 1.0):
     """
-    random.choices с нормализацией весов при бусте.
+    random.choices с бустом шансов для редких редкостей.
+    multiplier применяется к drop_chance каждого предмета с BOOSTED_RARITIES,
+    а остальные предметы сохраняют свои оригинальные веса.
     """
     if not items:
         return None
@@ -54,26 +56,12 @@ def get_weighted_random_item(items: list, multiplier: float = 1.0):
     if multiplier <= 1.0:
         weights = [item.drop_chance for item in items]
     else:
-        boosted_total = sum(it.drop_chance for it in items if it.rarity in BOOSTED_RARITIES)
-        normal_total = sum(it.drop_chance for it in items if it.rarity not in BOOSTED_RARITIES)
-        original_total = boosted_total + normal_total
-
-        if original_total <= 0 or boosted_total <= 0:
-            weights = [item.drop_chance for item in items]
-        else:
-            new_boosted_total = boosted_total * multiplier
-            if new_boosted_total >= original_total * 0.95:
-                new_boosted_total = original_total * 0.5
-            new_normal_total = original_total - new_boosted_total
-            normal_scale = new_normal_total / normal_total if normal_total > 0 else 1.0
-            boosted_scale = new_boosted_total / boosted_total if boosted_total > 0 else 1.0
-
-            weights = []
-            for item in items:
-                if item.rarity in BOOSTED_RARITIES:
-                    weights.append(item.drop_chance * boosted_scale)
-                else:
-                    weights.append(item.drop_chance * normal_scale)
+        weights = []
+        for item in items:
+            if item.rarity in BOOSTED_RARITIES:
+                weights.append(item.drop_chance * multiplier)
+            else:
+                weights.append(item.drop_chance)
 
     total = sum(weights)
     if total <= 0:

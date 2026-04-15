@@ -280,7 +280,7 @@ class User(Base):
 
     def get_drop_multiplier(self) -> float:
         if self.is_putana_active():
-            return 5.0
+            return 7.0
         if self.is_doll_active():
             return 2.0
         return 1.0
@@ -378,7 +378,7 @@ class User(Base):
         if self.is_putana_active():
             h = max(0, int((self.putana_until - now).total_seconds() // 3600))
             m = max(0, int(((self.putana_until - now).total_seconds() % 3600) // 60))
-            boosts.append(f"💋 Путана x5 ({h}ч {m}мин)")
+            boosts.append(f"💋 Путана x7 ({h}ч {m}мин)")
         return "\n".join(boosts) if boosts else "<b>Без бустов</b>"
 
 
