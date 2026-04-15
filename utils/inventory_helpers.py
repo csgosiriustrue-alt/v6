@@ -35,6 +35,7 @@ def destroy_safe(victim: User) -> None:
     victim.safe_type = None
     victim.safe_code = None
     victim.safe_health = 0
+    victim.elite_safe_health = 0
     victim.hidden_item_ids = []
     victim.hidden_coins = 0
     logger.info(f"🗑 Сейф уничтожен: user={victim.tg_id}")
@@ -94,6 +95,7 @@ async def activate_safe(session: AsyncSession, user: User, safe_type: str) -> No
         user.safe_health = 3
     else:
         user.safe_health = -1  # Элитный — вечный
+        user.elite_safe_health = 2  # Сброс здоровья элитного сейфа
 
     logger.info(f"🔐 Сейф '{safe_type}' активирован: user={user.tg_id}, "
                 f"level={user.get_safe_level()}")

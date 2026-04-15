@@ -71,6 +71,7 @@ class User(Base):
     safe_type: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     safe_code: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)
     safe_health: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    elite_safe_health: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     hidden_item_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     hidden_coins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

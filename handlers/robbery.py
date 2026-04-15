@@ -178,7 +178,7 @@ async def _safe_answer(call: CallbackQuery, text: str = "", **kwargs):
         pass
 
 
-async def _send_robbery_notification(bot: Bot, victim: "User", robber_name: str, amount: int = 0, used_bouncer: bool = False) -> None:
+async def _send_robbery_notification(bot: Bot, victim: "User", robber_name: str, amount: int = 0, used_bouncer: bool = False, elite_safe_damaged: bool = False, elite_safe_destroyed: bool = False) -> None:
     """Отправляет уведомление жертве об успешном ограблении в ЛС."""
     if not victim.notifications_enabled:
         return
@@ -187,6 +187,11 @@ async def _send_robbery_notification(bot: Bot, victim: "User", robber_name: str,
 
     if used_bouncer:
         text += '\n❗ Охрана была бессильна против Вышибалы!'
+
+    if elite_safe_damaged:
+        text += '\n🏦 Ваш Элитный сейф выдержал! Осталось взломов до разрушения: 1'
+    elif elite_safe_destroyed:
+        text += '\n💔 Ваш Элитный сейф сломан и уничтожен!'
 
     try:
         await bot.send_message(chat_id=victim.tg_id, text=text, parse_mode="HTML")
@@ -1613,7 +1618,13 @@ async def rob_safe_recon(call: CallbackQuery) -> None:
             level = victim.get_safe_level()
 
             if victim.safe_type == "elite":
-                durability_line = f"🛡 Статус: <b>Вечный</b> | ⭐ ур.{level}"
+                health = victim.elite_safe_health
+                if health >= 2:
+                    durability_line = f"🛡 Состояние: 🟢 <b>Новое (2/2)</b> | ⭐ ур.{level}"
+                elif health == 1:
+                    durability_line = f"🛡 Состояние: 🟡 <b>Повреждено (1/2)</b> | ⭐ ур.{level}"
+                else:
+                    durability_line = f"🛡 Состояние: 🔴 <b>Сломано (0/2)</b> | ⭐ ур.{level}"
             else:
                 durability_line = f"❤️ Прочность: <b>{victim.safe_health}/3</b> | ⭐ ур.{level}"
 
@@ -1726,14 +1737,17 @@ async def rob_crowbar(call: CallbackQuery) -> None:
                 if success:
                     _failed_crowbar_attempts = 0
                     safe_coins_before = victim.hidden_coins or 0
-                    loot, loot_rob, loot_old_level, loot_new_levels, loot_percent = await _loot_safe(session, rid, victim)
+                    safe_type_before = victim.safe_type
+                    loot, loot_rob, loot_old_level, loot_new_levels, loot_percent, safe_destroyed = await _loot_safe(session, rid, victim)
                     apply_hazbik_protection(victim)
                     await session.commit()
                     _cleanup_session(iid, rid, vid)
                     if loot_rob and loot_new_levels:
                         await grant_level_rewards(call.bot, session, loot_rob, loot_old_level, loot_new_levels)
                         await session.commit()
-                    await _send_robbery_notification(call.bot, victim, rn, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer)
+                    elite_damaged = (not safe_destroyed and safe_type_before == "elite")
+                    elite_destroyed = (safe_destroyed and safe_type_before == "elite")
+                    await _send_robbery_notification(call.bot, victim, rn, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer, elite_safe_damaged=elite_damaged, elite_safe_destroyed=elite_destroyed)
                     await _safe_edit_text(
                         call.bot, inline_message_id=iid,
                         text=(
@@ -1949,14 +1963,17 @@ async def safe_submit(call: CallbackQuery) -> None:
                     rn = call.from_user.first_name or "Грабитель"
                     used_bouncer = sess.get("used_bouncer", False)
                     safe_coins_before = victim.hidden_coins or 0
-                    loot, loot_rob, loot_old_level, loot_new_levels, loot_percent = await _loot_safe(session, rid, victim)
+                    safe_type_before = victim.safe_type
+                    loot, loot_rob, loot_old_level, loot_new_levels, loot_percent, safe_destroyed = await _loot_safe(session, rid, victim)
                     apply_hazbik_protection(victim)
                     await session.commit()
                     _cleanup_session(iid, rid, vid)
                     if loot_rob and loot_new_levels:
                         await grant_level_rewards(call.bot, session, loot_rob, loot_old_level, loot_new_levels)
                         await session.commit()
-                    await _send_robbery_notification(call.bot, victim, rn, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer)
+                    elite_damaged = (not safe_destroyed and safe_type_before == "elite")
+                    elite_destroyed = (safe_destroyed and safe_type_before == "elite")
+                    await _send_robbery_notification(call.bot, victim, rn, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer, elite_safe_damaged=elite_damaged, elite_safe_destroyed=elite_destroyed)
                     await _safe_edit_text(
                         call.bot, inline_message_id=iid,
                         text=(
@@ -2203,6 +2220,12 @@ async def _loot_safe(session, robber_id, victim):
     new_levels: list[int] = []
     loot_percent = SAFE_LOOT_COIN_PERCENT  # default fallback
 
+    is_elite_first_crack = (
+        victim.safe_type == "elite"
+        and victim.elite_safe_health >= 2
+    )
+    safe_destroyed = not is_elite_first_crack
+
     if victim.hidden_item_ids:
         for iid in list(victim.hidden_item_ids):
             ir = await session.execute(select(Item).where(Item.id == iid))
@@ -2227,16 +2250,31 @@ async def _loot_safe(session, robber_id, victim):
             old_level = rob.level
             new_levels = add_xp(rob, stolen)
             lines.append(f"💰 {stolen:,}🪙 ({loot_percent * 100:.0f}%)")
-        if returned > 0:
-            victim.balance_vv += returned
-            lines.append(f"↩️ {returned:,}🪙 возвращено владельцу ({100 - loot_percent * 100:.0f}%)")
-        victim.hidden_coins = 0
+        if is_elite_first_crack:
+            # Первый взлом элитного сейфа: остаток остаётся в сейфе
+            victim.hidden_coins = returned
+            if returned > 0:
+                lines.append(f"↩️ {returned:,}🪙 остались в повреждённом сейфе ({100 - loot_percent * 100:.0f}%)")
+        else:
+            if returned > 0:
+                victim.balance_vv += returned
+                lines.append(f"↩️ {returned:,}🪙 возвращено владельцу ({100 - loot_percent * 100:.0f}%)")
+            victim.hidden_coins = 0
 
-    destroy_safe(victim)
+    if is_elite_first_crack:
+        # Первый взлом: сейф повреждён, но не уничтожен
+        victim.elite_safe_health = 1
+        victim.safe_code = generate_safe_code()
+    else:
+        # Второй взлом элитного сейфа или любой взлом ржавого: уничтожаем
+        if victim.safe_type == "elite":
+            victim.elite_safe_health = 0
+        destroy_safe(victim)
+
     _safe_fail_tracker.pop(victim.tg_id, None)
 
     loot_text = "<b>Добыча:</b>\n" + "\n".join(f"  • {l}" for l in lines) if lines else "<b>Добыча:</b>\n  <i>Пуст!</i>"
-    return loot_text, rob, old_level, new_levels, loot_percent
+    return loot_text, rob, old_level, new_levels, loot_percent, safe_destroyed
 
 
 # ============================================================================
