@@ -40,6 +40,7 @@ class Database:
             ("users", "safe_level_rusty", "ALTER TABLE users ADD COLUMN safe_level_rusty INTEGER NOT NULL DEFAULT 1"),
             ("users", "safe_level_elite", "ALTER TABLE users ADD COLUMN safe_level_elite INTEGER NOT NULL DEFAULT 1"),
             ("users", "notifications_enabled", "ALTER TABLE users ADD COLUMN notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("users", "elite_safe_health", "ALTER TABLE users ADD COLUMN elite_safe_health INTEGER NOT NULL DEFAULT 2"),
         ]
 
         async with self.engine.begin() as conn:
