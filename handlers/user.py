@@ -284,7 +284,7 @@ async def _handle_profile_dm(message: Message) -> None:
             user_r = await session.execute(select(User).where(User.tg_id == user_id))
             user = user_r.scalar_one_or_none()
 
-            buttons = None
+            buttons_rows = []
             if user and user.jail_until and user.jail_until > datetime.utcnow():
                 inv_r = await session.execute(select(Inventory).where(Inventory.user_id == user_id))
                 inv_all = inv_r.scalars().all()
@@ -292,13 +292,17 @@ async def _handle_profile_dm(message: Message) -> None:
                 lawyer_count = sum(inv.quantity for inv in inv_all if inv.item.name == "Адвокат" and inv.quantity > 0)
                 if has_lawyer:
                     text += f"\n\n💼 <i>Адвокат доступен! ({lawyer_count} шт.)</i>"
-                    buttons = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="💼 Вызвать адвоката",
-                            callback_data=f"lawyer_{user_id}")]
-                    ])
+                    buttons_rows.append([InlineKeyboardButton(text="💼 Вызвать адвоката",
+                        callback_data=f"lawyer_{user_id}")])
 
+            if user:
+                notif_label = '🔔 Уведомления: ВКЛ' if user.notifications_enabled else '🔕 Уведомления: ВЫКЛ'
+                buttons_rows.append([InlineKeyboardButton(text=notif_label,
+                    callback_data=f"toggle_notif_{user_id}")])
+
+            markup = InlineKeyboardMarkup(inline_keyboard=buttons_rows) if buttons_rows else None
             await message.answer(text, parse_mode="HTML",
-                reply_markup=buttons or get_main_keyboard())
+                reply_markup=markup or get_main_keyboard())
         except Exception as e:
             logger.error(f"❌ Профиль: {e}", exc_info=True)
             await message.answer("❌ Ошибка")
@@ -330,6 +334,49 @@ async def lawyer_callback(call: CallbackQuery) -> None:
         except Exception as e:
             await session.rollback()
             logger.error(f"❌ Адвокат: {e}", exc_info=True)
+            await call.answer("❌ Ошибка", show_alert=True)
+        finally:
+            await session.close()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("toggle_notif_"))
+async def toggle_notifications(call: CallbackQuery) -> None:
+    user_id = int(call.data.split("toggle_notif_")[1])
+    if call.from_user.id != user_id:
+        await call.answer("❌ Не ваш профиль!", show_alert=True)
+        return
+    db = get_db()
+    async for session in db.get_session():
+        try:
+            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user = user_r.scalar_one_or_none()
+            if not user:
+                await call.answer("❌ Пользователь не найден!", show_alert=True)
+                return
+            user.notifications_enabled = not user.notifications_enabled
+            await session.commit()
+            new_text = await build_profile_text(user_id, session)
+            notif_label = '🔔 Уведомления: ВКЛ' if user.notifications_enabled else '🔕 Уведомления: ВЫКЛ'
+            buttons_rows = []
+            if user.jail_until and user.jail_until > datetime.utcnow():
+                inv_r = await session.execute(select(Inventory).where(Inventory.user_id == user_id))
+                inv_all = inv_r.scalars().all()
+                has_lawyer = any(inv.item.name == "Адвокат" and inv.quantity > 0 for inv in inv_all)
+                lawyer_count = sum(inv.quantity for inv in inv_all if inv.item.name == "Адвокат" and inv.quantity > 0)
+                if has_lawyer:
+                    new_text += f"\n\n💼 <i>Адвокат доступен! ({lawyer_count} шт.)</i>"
+                    buttons_rows.append([InlineKeyboardButton(text="💼 Вызвать адвоката", callback_data=f"lawyer_{user_id}")])
+            buttons_rows.append([InlineKeyboardButton(text=notif_label, callback_data=f"toggle_notif_{user_id}")])
+            markup = InlineKeyboardMarkup(inline_keyboard=buttons_rows)
+            try:
+                await call.message.edit_text(new_text, parse_mode="HTML", reply_markup=markup)
+            except Exception:
+                pass
+            status = "включены" if user.notifications_enabled else "выключены"
+            await call.answer(f"✅ Уведомления {status}!", show_alert=False)
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"❌ toggle_notif: {e}", exc_info=True)
             await call.answer("❌ Ошибка", show_alert=True)
         finally:
             await session.close()
@@ -771,34 +818,30 @@ async def cmd_donat(message: Message) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    bot_me = await message.bot.get_me()
-    bn = bot_me.username or "GiftHeistBot"
     await message.answer(
-        f"<b>📚 Gift Heist</b>\n\n"
-        f"<b>📱 ЛС:</b>\n"
-        f"/start /profile /inventory /safe\n"
-        f"/box /shop /blackmarket /stats\n\n"
-        f"<b>💬 Группа:</b>\n"
-        f"/pot /donat [сумма] /help\n"
-        f"<code>🎰 500</code> / <code>казино 1000</code> / <code>ставка 200</code>\n\n"
-        f"<b>🎮 Инлайн:</b>\n"
-        f"<code>@{bn}</code> → подсказки и теребление\n"
-        f"<code>@{bn} 1000</code> → казино\n"
-        f"<code>@{bn} @user</code> → ограбление\n"
-        f"<code>@{bn} 1000 @user</code> → перевод (с 5 ур.)\n\n"
-        f"<b>⚙️ Механики:</b>\n"
-        f"✊ Заряды: макс. {MAX_BOX_COUNT}, КД {BOX_REFILL_HOURS}ч (2ч с 🔞)\n"
-        f"🧬 Дуров: 1 из 555 попыток (0.18%)\n"
-        f"💦 Полюция: 7.77% → два гена за раз\n"
-        f"🫦 Кукла: x2 шанс топ-тир + легенд\n"
-        f"💋 Путана: x5 шанс топ-тир + легенд\n"
-        f"⚡ Заряды: 500🪙 или 3⭐ в /shop\n"
-        f"🏦 Проигрыш: 50% в общак, 50% сгорает\n"
-        f"🔫 Ограбление: залог деньгами (наличные + сейф)\n"
-        f"💼 Адвокат: мгновенное освобождение из тюрьмы\n"
-        f"🎰 Лимит: {MAX_DAILY_BETS} ставок/день (сброс по UTC)\n"
-        f"⭐ Уровни: XP за казино, ограбления, продажу генов\n"
-        f"💸 Переводы: доступны с 5 уровня (комиссия 3%)",
+        "📚 CUM GEN: ПРАВИЛА УЛИЦ\n"
+        "ОСНОВНОЙ ЦИКЛ:\n"
+        "💦 Тереби — получай случайные гены.\n"
+        "🧬 Гены — продавай их, чтобы накопить монеты.\n"
+        "💰 Монеты — твоя власть. Трать на защиту, уровни или азарт.\n\n"
+        "⚙️ МЕХАНИКИ ИГРЫ:\n"
+        "🧬 ГЕНЕТИКА\n\n"
+        "Выпадают при тереблении. Чем реже ген, тем дороже продажа.\n\n"
+        "Самые редкие (0.01%) — гены Бога и Тайного Правительства.\n\n"
+        "🔫 ОГРАБЛЕНИЯ\n\n"
+        "Шанс: Зависит от твоего баланса и жертвы. Грабить бедных — шанс 1%. Грабить равных — профит.\n\n"
+        "Сейф: Взламывай код, чтобы вынести до 25% заначки.\n\n"
+        "Тюрьма: Неудачный грабеж = срок. 💼 Адвокат вытащит тебя мгновенно.\n\n"
+        "🛡 ЗАЩИТА И БАЛАНС\n\n"
+        "Охрана: Защищает сейф на 6 часов.\n\n"
+        "Вышибала: Наемник, который игнорирует любую охрану жертвы (20k 🪙).\n\n"
+        "Заморозка: Тебя грабят? Финансовые операции блокируются.\n\n"
+        "🎰 АЗАРТНЫЕ ИГРЫ\n\n"
+        "Казино: Испытай удачу с множителями до x20.\n\n"
+        "Блек Джек (21): Классика против дилера. Победа — x2.\n\n"
+        "📈 ПРОГРЕСС\n\n"
+        "Уровни: Получай XP за продажи, игры и грабежи. За каждый Level Up — заряд теребления!\n\n"
+        "Переводы: Доступны с 5 уровня (Комиссия 3%).",
         parse_mode="HTML",
         reply_markup=get_main_keyboard() if _is_private(message) else None)
 
