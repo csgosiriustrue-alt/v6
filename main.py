@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, Message, TelegramObject
 
 from handlers import admin_shop
+from utils.throttling import ThrottlingMiddleware
 
 from config import BOT_TOKEN, DATABASE_URL
 from database import init_database, get_db
@@ -48,6 +49,7 @@ async def _save_chat_mapping(user_id: int, chat_id: int) -> None:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 dp.message.middleware(ChatTrackingMiddleware())
+dp.callback_query.middleware(ThrottlingMiddleware())
 
 dp.include_router(inline_router.router)
 dp.include_router(game_21.router)
