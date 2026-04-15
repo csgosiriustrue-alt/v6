@@ -12,7 +12,13 @@ from utils.keyboards import get_main_keyboard, format_emoji, format_emoji_button
 from utils.formatters import format_balance
 from utils.pot_event import track_chat_activity, check_pot_explosion
 from utils.box_utils import update_user_boxes, get_time_until_next_box
-from utils.inventory_helpers import add_item_to_inventory
+from utils.inventory_helpers import (
+    add_item_to_inventory,
+    activate_boost,
+    activate_security,
+    activate_roof,
+    activate_safe,
+)
 from utils.levels import format_level_line, add_xp, grant_level_rewards
 
 logger = logging.getLogger(__name__)
@@ -414,7 +420,40 @@ async def _handle_inventory_dm(message: Message) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            # Чистим фантомные активируемые предметы из inventory через JOIN на уровне БД
+            # Загружаем пользователя для активации фантомных предметов
+            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user = user_r.scalar_one_or_none()
+
+            activation_messages = []
+
+            if user:
+                # Ищем фантомные активируемые предметы в инвентаре
+                phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
+                ph_inv_r = await session.execute(
+                    select(Inventory).where(
+                        Inventory.user_id == user_id,
+                        Inventory.item_id.in_(phantom_subq)))
+                phantom_inv_items = ph_inv_r.scalars().all()
+
+                for inv in phantom_inv_items:
+                    item_name = inv.item.name
+                    if item_name in {"Журнал для взрослых", "Резиновая кукла", "Путана"}:
+                        _, msg = await activate_boost(session, user, item_name)
+                        activation_messages.append(f"✅ {msg}")
+                    elif item_name == "Охрана":
+                        _, msg = await activate_security(session, user)
+                        activation_messages.append(f"✅ {msg}")
+                    elif item_name == "Крыша":
+                        _, msg = await activate_roof(session, user)
+                        activation_messages.append(f"✅ {msg}")
+                    elif item_name == "Ржавый Сейф":
+                        await activate_safe(session, user, "rusty")
+                        activation_messages.append("✅ Ржавый сейф активирован!")
+                    elif item_name == "Элитный Сейф":
+                        await activate_safe(session, user, "elite")
+                        activation_messages.append("✅ Элитный сейф активирован!")
+
+            # Удаляем оставшиеся фантомные предметы из inventory
             phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
             await session.execute(
                 delete(Inventory).where(
@@ -423,6 +462,8 @@ async def _handle_inventory_dm(message: Message) -> None:
             await session.flush()
 
             text = await build_inventory_text(user_id, session)
+            if activation_messages:
+                text = "\n".join(activation_messages) + "\n\n" + text
             inv_r = await session.execute(select(Inventory).where(Inventory.user_id == user_id))
             inv_items = inv_r.scalars().all()
             sellable = [inv for inv in inv_items if _is_sellable(inv)]
