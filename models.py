@@ -111,9 +111,6 @@ class User(Base):
     is_robbing_now: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     robbing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # ── Уведомления ──
-    notifications_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
     inventory: Mapped[list["Inventory"]] = relationship(
         "Inventory", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     purchases: Mapped[list["PurchaseLog"]] = relationship(
