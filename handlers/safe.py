@@ -335,7 +335,7 @@ async def safe_upgrade_execute(call: CallbackQuery) -> None:
 
     async for session in db.get_session():
         try:
-            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user_result = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_result.scalar_one_or_none()
 
             if not user or not user.has_active_safe():
@@ -749,12 +749,15 @@ async def safe_deposit_manual_input(message: Message, state: FSMContext) -> None
         return
 
     amount = int(text)
+    if amount > 1_000_000_000:
+        await message.answer("❌ Слишком большая сумма!", reply_markup=get_main_keyboard())
+        return
     await state.clear()
 
     db = get_db()
     async for session in db.get_session():
         try:
-            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user_result = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_result.scalar_one_or_none()
 
             if not user or not user.has_active_safe():
@@ -799,12 +802,15 @@ async def safe_deposit_coins(call: CallbackQuery) -> None:
     if call.from_user.id != user_id:
         await call.answer("❌ Это не ваш сейф!", show_alert=True)
         return
+    if amount <= 0:
+        await call.answer("❌ Некорректная сумма!", show_alert=True)
+        return
 
     db = get_db()
 
     async for session in db.get_session():
         try:
-            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user_result = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_result.scalar_one_or_none()
 
             if user and user.is_being_robbed:
@@ -953,12 +959,15 @@ async def safe_withdraw_manual_input(message: Message, state: FSMContext) -> Non
         return
 
     amount = int(text)
+    if amount > 1_000_000_000:
+        await message.answer("❌ Слишком большая сумма!", reply_markup=get_main_keyboard())
+        return
     await state.clear()
 
     db = get_db()
     async for session in db.get_session():
         try:
-            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user_result = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_result.scalar_one_or_none()
 
             if user and user.is_being_robbed:
@@ -1003,12 +1012,15 @@ async def safe_withdraw_coins(call: CallbackQuery) -> None:
     if call.from_user.id != user_id:
         await call.answer("❌ Это не ваш сейф!", show_alert=True)
         return
+    if amount <= 0:
+        await call.answer("❌ Некорректная сумма!", show_alert=True)
+        return
 
     db = get_db()
 
     async for session in db.get_session():
         try:
-            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user_result = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_result.scalar_one_or_none()
 
             if user and user.is_being_robbed:

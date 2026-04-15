@@ -7,6 +7,7 @@ SLOT_MAP = [1, 2, 3, 0]
 
 MAX_COMMON_POT = 100_000
 MIN_BET = 300
+MAX_BET = 10_000_000  # Максимальная ставка
 POT_PERCENT = 0.50  # 50% в общак, 50% сгорается
 MAX_DAILY_BETS = 25
 

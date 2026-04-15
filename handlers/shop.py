@@ -399,11 +399,14 @@ async def shop_view(call: CallbackQuery) -> None:
 async def shop_buy_coins(call: CallbackQuery) -> None:
     parts = call.data.split("_")
     item_id, qty = int(parts[2]), int(parts[3])
+    if qty <= 0 or item_id <= 0:
+        await call.answer("❌ Некорректные данные!", show_alert=True)
+        return
     user_id = call.from_user.id
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             item_r = await session.execute(select(Item).where(Item.id == item_id))
             item = item_r.scalar_one_or_none()
@@ -876,7 +879,7 @@ async def bm_buy(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             item_r = await session.execute(select(Item).where(Item.id == item_id))
             item = item_r.scalar_one_or_none()
@@ -947,7 +950,7 @@ async def bm_buy_charges(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             if not user:
                 await call.answer("❌", show_alert=True)

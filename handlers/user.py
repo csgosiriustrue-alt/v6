@@ -522,7 +522,7 @@ async def sell_execute(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             inv_r = await session.execute(
                 select(Inventory).where(Inventory.user_id == user_id, Inventory.item_id == item_id))
@@ -624,7 +624,7 @@ async def sellall_confirm(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             inv_r = await session.execute(
                 select(Inventory).where(Inventory.user_id == user_id, Inventory.item_id == item_id))
@@ -684,7 +684,7 @@ async def sellall_everything(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             if not user:
                 await call.answer("❌", show_alert=True)
@@ -779,7 +779,7 @@ async def cmd_donat(message: Message) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             if not user:
                 await message.answer("❌ /start в ЛС!")

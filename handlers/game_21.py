@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from database import get_db
 from models import User, GroupChat, MAX_DAILY_BETS, MAX_DAILY_BJ
-from utils.casino_utils import MIN_BET, MAX_COMMON_POT, POT_PERCENT
+from utils.casino_utils import MIN_BET, MAX_BET, MAX_COMMON_POT, POT_PERCENT
 from utils.pot_event import track_chat_activity, check_pot_explosion
 from utils.levels import add_xp, grant_level_rewards
 from utils.keyboards import get_casino_keyboard
@@ -147,6 +147,15 @@ async def bj_inline_handler(inline_query: InlineQuery) -> None:
                 message_text=f"❌ Минимум: <b>{MIN_BET} 🪙</b>", parse_mode="HTML"))
         await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
         return
+    if bet > MAX_BET:
+        r = InlineQueryResultArticle(
+            id="bet_high",
+            title=f"❌ Максимум: {MAX_BET:,} 🪙",
+            description=f"Максимальная ставка — {MAX_BET:,} 🪙",
+            input_message_content=InputTextMessageContent(
+                message_text=f"❌ Максимум: <b>{MAX_BET:,} 🪙</b>", parse_mode="HTML"))
+        await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
+        return
 
     db = get_db()
     has_funds = False
@@ -275,6 +284,9 @@ async def bj_start_handler(call: CallbackQuery) -> None:
     if call.from_user.id != owner_id:
         await call.answer("❌ Не твоя игра!", show_alert=True)
         return
+    if bet < MIN_BET or bet > MAX_BET:
+        await call.answer("❌ Некорректная ставка!", show_alert=True)
+        return
 
     await call.answer()
 
@@ -296,7 +308,7 @@ async def bj_start_handler(call: CallbackQuery) -> None:
     async for session in db.get_session():
         try:
             await track_chat_activity(session, chat_id, owner_id)
-            ur = await session.execute(select(User).where(User.tg_id == owner_id))
+            ur = await session.execute(select(User).where(User.tg_id == owner_id).with_for_update())
             user = ur.scalar_one_or_none()
             if not user:
                 if inline_id:
@@ -745,6 +757,9 @@ async def bj_again_handler(call: CallbackQuery) -> None:
     if call.from_user.id != owner_id:
         await call.answer("❌ Не твоя игра!", show_alert=True)
         return
+    if bet < MIN_BET or bet > MAX_BET:
+        await call.answer("❌ Некорректная ставка!", show_alert=True)
+        return
 
     await call.answer()
 
@@ -767,7 +782,7 @@ async def bj_again_handler(call: CallbackQuery) -> None:
         async for session in db.get_session():
             try:
                 await track_chat_activity(session, chat_id, owner_id)
-                ur = await session.execute(select(User).where(User.tg_id == owner_id))
+                ur = await session.execute(select(User).where(User.tg_id == owner_id).with_for_update())
                 user = ur.scalar_one_or_none()
                 if not user:
                     try:
