@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 _inline_history: dict[str, list[dict]] = {}
+processing_users: dict[int, bool] = {}
 POLLUTION_CHANCE = 0.0777
 
 
@@ -206,136 +207,152 @@ async def open_box_handler(call: CallbackQuery) -> None:
         await call.answer("❌ Это не твоё!", show_alert=True)
         return
 
+    if user_id in processing_users:
+        await call.answer("⏳ Обработка...")
+        return
+    processing_users[user_id] = True
+    await call.answer()
+
     has_inline_id = bool(call.inline_message_id)
     has_message = call.message is not None
     chat_type = call.message.chat.type if has_message and call.message.chat else None
     db = get_db()
 
-    async for session in db.get_session():
-        try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
-            user = user_r.scalar_one_or_none()
-            if not user:
-                user = User(tg_id=user_id, username=call.from_user.username or user_first_name,
-                    box_count=MAX_BOX_COUNT, last_refill_at=datetime.utcnow())
-                session.add(user)
-                await session.flush()
+    try:
+        async for session in db.get_session():
+            try:
+                user_r = await session.execute(select(User).where(User.tg_id == user_id))
+                user = user_r.scalar_one_or_none()
+                if not user:
+                    user = User(tg_id=user_id, username=call.from_user.username or user_first_name,
+                        box_count=MAX_BOX_COUNT, last_refill_at=datetime.utcnow())
+                    session.add(user)
+                    await session.flush()
 
-            await update_user_boxes(user)
+                await update_user_boxes(user)
 
-            if user.box_count <= 0:
-                refill_h = user.get_refill_hours()
-                hours, minutes = get_time_until_next_box(user.last_refill_at, refill_h)
-                no_text = (f"❌ <b>Нечего теребить!</b>\n\n"
-                    f"Осталось: <b>0/{MAX_BOX_COUNT}</b>\n"
-                    f"Через <b>{hours}ч. {minutes}мин.</b>\n\n"
-                    f"⚡ Заряды можно купить в ЛС бота, в разделе магазин.")
+                if user.box_count <= 0:
+                    refill_h = user.get_refill_hours()
+                    hours, minutes = get_time_until_next_box(user.last_refill_at, refill_h)
+                    no_text = (f"❌ <b>Нечего теребить!</b>\n\n"
+                        f"Осталось: <b>0/{MAX_BOX_COUNT}</b>\n"
+                        f"Через <b>{hours}ч. {minutes}мин.</b>\n\n"
+                        f"⚡ Заряды можно купить в ЛС бота, в разделе магазин.")
+                    if has_inline_id:
+                        try:
+                            await call.bot.edit_message_text(text=no_text,
+                                inline_message_id=call.inline_message_id, parse_mode="HTML")
+                        except Exception:
+                            pass
+                    elif has_message:
+                        try:
+                            await call.message.edit_text(no_text, parse_mode="HTML")
+                        except Exception:
+                            pass
+                    return
+
+                # Атомарное списание заряда ДО анимации
+                user.box_count -= 1
+                user.increment_action()
+                await session.commit()
+
+                # Анимация (после фиксации списания)
                 if has_inline_id:
                     try:
-                        await call.bot.edit_message_text(text=no_text,
+                        await call.bot.edit_message_text(
+                            text=f"✊ <b>{user_first_name} теребит...</b>",
                             inline_message_id=call.inline_message_id, parse_mode="HTML")
                     except Exception:
                         pass
+                    await asyncio.sleep(1.5)
                 elif has_message:
                     try:
-                        await call.message.edit_text(no_text, parse_mode="HTML")
+                        await call.message.edit_text("✊ <b>Теребим...</b>", parse_mode="HTML")
                     except Exception:
                         pass
-                await call.answer("⏳ Перезарядка...", show_alert=True)
-                return
+                    await asyncio.sleep(1.5)
 
-            # Анимация
-            if has_inline_id:
-                try:
-                    await call.bot.edit_message_text(
-                        text=f"✊ <b>{user_first_name} теребит...</b>",
-                        inline_message_id=call.inline_message_id, parse_mode="HTML")
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
-            elif has_message:
-                try:
-                    await call.message.edit_text("✊ <b>Теребим...</b>", parse_mode="HTML")
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
+                items, pollution = await _roll_items(session, user)
+                if not items:
+                    logger.warning(f"✊ {user_id}: нет предметов для выдачи")
+                    err_text = "❌ <b>Нет предметов для выдачи.</b>"
+                    if has_inline_id:
+                        try:
+                            await call.bot.edit_message_text(text=err_text,
+                                inline_message_id=call.inline_message_id, parse_mode="HTML")
+                        except Exception:
+                            pass
+                    elif has_message:
+                        try:
+                            await call.message.edit_text(err_text, parse_mode="HTML")
+                        except Exception:
+                            pass
+                    return
 
-            user.box_count -= 1
-            user.increment_action()
+                await _add_items_to_inv(session, user_id, items)
+                await session.commit()
 
-            items, pollution = await _roll_items(session, user)
-            if not items:
-                await call.answer("❌ Нет предметов", show_alert=True)
-                return
+                boosts_text = user.active_boosts_text()
+                reply_markup = _get_result_keyboard(user_id, user.box_count)
 
-            await _add_items_to_inv(session, user_id, items)
-            await session.commit()
+                dm_items = [{"name": it.name, "emoji": str(it.emoji), "price": it.price,
+                    "rarity_emoji": get_rarity_emoji(it.rarity),
+                    "rarity_name": get_rarity_name(it.rarity)} for it in items]
 
-            boosts_text = user.active_boosts_text()
-            reply_markup = _get_result_keyboard(user_id, user.box_count)
+                if has_inline_id:
+                    inline_id = call.inline_message_id
+                    if inline_id not in _inline_history:
+                        _inline_history[inline_id] = []
+                    for it in items:
+                        _inline_history[inline_id].append(
+                            _item_info(it, get_rarity_emoji(it.rarity), get_rarity_name(it.rarity)))
+                    inline_text = _build_result_text_inline(
+                        user_first_name, _inline_history[inline_id],
+                        user.box_count, boosts_text, pollution)
+                    try:
+                        await call.bot.edit_message_text(text=inline_text, inline_message_id=inline_id,
+                            parse_mode="HTML", reply_markup=reply_markup)
+                    except Exception:
+                        pass
 
-            dm_items = [{"name": it.name, "emoji": str(it.emoji), "price": it.price,
-                "rarity_emoji": get_rarity_emoji(it.rarity),
-                "rarity_name": get_rarity_name(it.rarity)} for it in items]
+                elif has_message and chat_type == "private":
+                    dm_text = _build_dm_text(dm_items, boosts_text, user.box_count, pollution)
+                    try:
+                        await call.message.edit_text(dm_text, parse_mode="HTML", reply_markup=reply_markup)
+                    except Exception:
+                        await call.bot.send_message(chat_id=user_id, text=dm_text, parse_mode="HTML")
 
-            if has_inline_id:
-                inline_id = call.inline_message_id
-                if inline_id not in _inline_history:
-                    _inline_history[inline_id] = []
-                for it in items:
-                    _inline_history[inline_id].append(
-                        _item_info(it, get_rarity_emoji(it.rarity), get_rarity_name(it.rarity)))
-                inline_text = _build_result_text_inline(
-                    user_first_name, _inline_history[inline_id],
-                    user.box_count, boosts_text, pollution)
-                try:
-                    await call.bot.edit_message_text(text=inline_text, inline_message_id=inline_id,
-                        parse_mode="HTML", reply_markup=reply_markup)
-                except Exception:
-                    pass
+                elif has_message and chat_type != "private":
+                    inline_items = [_item_info(it, get_rarity_emoji(it.rarity), get_rarity_name(it.rarity))
+                        for it in items]
+                    group_text = _build_result_text_inline(
+                        user_first_name, inline_items, user.box_count, boosts_text, pollution)
+                    try:
+                        await call.message.delete()
+                    except Exception:
+                        pass
+                    try:
+                        await call.bot.send_message(chat_id=call.message.chat.id, text=group_text,
+                            parse_mode="HTML", reply_markup=reply_markup)
+                    except Exception:
+                        pass
+                else:
+                    dm_text = _build_dm_text(dm_items, boosts_text, user.box_count, pollution)
+                    try:
+                        await call.bot.send_message(chat_id=user_id, text=dm_text, parse_mode="HTML")
+                    except Exception:
+                        pass
 
-            elif has_message and chat_type == "private":
-                dm_text = _build_dm_text(dm_items, boosts_text, user.box_count, pollution)
-                try:
-                    await call.message.edit_text(dm_text, parse_mode="HTML", reply_markup=reply_markup)
-                except Exception:
-                    await call.bot.send_message(chat_id=user_id, text=dm_text, parse_mode="HTML")
+                names = " + ".join(it.name for it in items)
+                logger.info(f"✊ {user_id} → {names} {'(ПОЛЮЦИЯ)' if pollution else ''}")
 
-            elif has_message and chat_type != "private":
-                inline_items = [_item_info(it, get_rarity_emoji(it.rarity), get_rarity_name(it.rarity))
-                    for it in items]
-                group_text = _build_result_text_inline(
-                    user_first_name, inline_items, user.box_count, boosts_text, pollution)
-                try:
-                    await call.message.delete()
-                except Exception:
-                    pass
-                try:
-                    await call.bot.send_message(chat_id=call.message.chat.id, text=group_text,
-                        parse_mode="HTML", reply_markup=reply_markup)
-                except Exception:
-                    pass
-            else:
-                dm_text = _build_dm_text(dm_items, boosts_text, user.box_count, pollution)
-                try:
-                    await call.bot.send_message(chat_id=user_id, text=dm_text, parse_mode="HTML")
-                except Exception:
-                    pass
-
-            emoji_text = "💦🧬" if pollution else "🧬"
-            await call.answer(f"{emoji_text} Готово!", show_alert=False)
-            names = " + ".join(it.name for it in items)
-            logger.info(f"✊ {user_id} → {names} {'(ПОЛЮЦИЯ)' if pollution else ''}")
-
-        except Exception as e:
-            await session.rollback()
-            logger.error(f"❌ Теребление: {e}", exc_info=True)
-            try:
-                await call.answer("❌ Ошибка", show_alert=True)
-            except Exception:
-                pass
-        finally:
-            await session.close()
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"❌ Теребление: {e}", exc_info=True)
+            finally:
+                await session.close()
+    finally:
+        processing_users.pop(user_id, None)
 
 
 # ============================================================================
