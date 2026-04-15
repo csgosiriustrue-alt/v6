@@ -425,10 +425,10 @@ async def _handle_inventory_dm(message: Message) -> None:
             user = user_r.scalar_one_or_none()
 
             activation_messages = []
+            phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
 
             if user:
                 # Ищем фантомные активируемые предметы в инвентаре
-                phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
                 ph_inv_r = await session.execute(
                     select(Inventory).where(
                         Inventory.user_id == user_id,
@@ -454,7 +454,6 @@ async def _handle_inventory_dm(message: Message) -> None:
                         activation_messages.append("✅ Элитный сейф активирован!")
 
             # Удаляем оставшиеся фантомные предметы из inventory
-            phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
             await session.execute(
                 delete(Inventory).where(
                     Inventory.user_id == user_id,
