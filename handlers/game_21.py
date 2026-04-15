@@ -11,7 +11,7 @@ from aiogram.types import (
 from sqlalchemy import select
 
 from database import get_db
-from models import User, GroupChat, MAX_DAILY_BETS
+from models import User, GroupChat, MAX_DAILY_BETS, MAX_DAILY_BJ
 from utils.casino_utils import MIN_BET, MAX_COMMON_POT, POT_PERCENT
 from utils.pot_event import track_chat_activity, check_pot_explosion
 from utils.levels import add_xp, grant_level_rewards
@@ -151,6 +151,7 @@ async def bj_inline_handler(inline_query: InlineQuery) -> None:
     db = get_db()
     has_funds = False
     has_bets = False
+    has_bj_games = False
     async for session in db.get_session():
         try:
             ur = await session.execute(select(User).where(User.tg_id == user_id))
@@ -159,6 +160,8 @@ async def bj_inline_handler(inline_query: InlineQuery) -> None:
                 has_funds = u.balance_vv >= bet
                 can_bet, _ = u.check_casino_limit()
                 has_bets = can_bet
+                can_bj, _ = u.check_bj_limit()
+                has_bj_games = can_bj
         except Exception:
             pass
         finally:
@@ -174,59 +177,67 @@ async def bj_inline_handler(inline_query: InlineQuery) -> None:
         await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
         return
 
-    if not has_bets:
+    if not has_bets and not has_bj_games:
         r = InlineQueryResultArticle(
             id="bet_limit",
-            title=f"❌ Лимит {MAX_DAILY_BETS} ставок/день",
+            title=f"❌ Лимит {MAX_DAILY_BETS} ставок/день (казино) и {MAX_DAILY_BJ} игр/день (блэкджек)",
             description="Сброс в полночь UTC",
             input_message_content=InputTextMessageContent(
-                message_text=f"❌ <b>Лимит ставок!</b> {MAX_DAILY_BETS}/день", parse_mode="HTML"))
+                message_text=f"❌ <b>Лимит исчерпан!</b> Казино: {MAX_DAILY_BETS}/день, Блэкджек: {MAX_DAILY_BJ}/день", parse_mode="HTML"))
         await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
         return
 
-    # Результат казино
-    casino_result_id = f"casino_{user_id}_{bet}"
-    casino_result = InlineQueryResultArticle(
-        id=casino_result_id,
-        title=f"🎰 Казино — ставка {bet:,} 🪙",
-        description="Нажмите чтобы отправить в чат",
-        input_message_content=InputTextMessageContent(
-            message_text=f"🎰 <b>{user_first_name}</b> ставит <b>{bet:,} 🪙</b>!\n\nНажми кнопку 👇",
-            parse_mode="HTML"),
-        reply_markup=get_casino_keyboard(bet, owner_id=user_id, chat_id=0))
+    results = []
 
-    # Заполняем _pending_casino для логирования в casino_chosen_result
-    try:
-        from handlers.casino import _pending_casino
-        _pending_casino[casino_result_id] = {
+    if has_bets:
+        # Результат казино
+        casino_result_id = f"casino_{user_id}_{bet}"
+        casino_result = InlineQueryResultArticle(
+            id=casino_result_id,
+            title=f"🎰 Казино — ставка {bet:,} 🪙",
+            description="Нажмите чтобы отправить в чат",
+            input_message_content=InputTextMessageContent(
+                message_text=f"🎰 <b>{user_first_name}</b> ставит <b>{bet:,} 🪙</b>!\n\nНажми кнопку 👇",
+                parse_mode="HTML"),
+            reply_markup=get_casino_keyboard(bet, owner_id=user_id, chat_id=0))
+
+        # Заполняем _pending_casino для логирования в casino_chosen_result
+        try:
+            from handlers.casino import _pending_casino
+            _pending_casino[casino_result_id] = {
+                "user_id": user_id, "bet": bet, "user_first_name": user_first_name}
+        except Exception:
+            pass
+
+        results.append(casino_result)
+
+    if has_bj_games:
+        # Результат блэкджека
+        bj_result_id = f"bj_{user_id}_{bet}"
+        bj_result = InlineQueryResultArticle(
+            id=bj_result_id,
+            title=f"🃏 Блэкджек — ставка {bet:,} 🪙",
+            description="Нажмите чтобы отправить в чат",
+            input_message_content=InputTextMessageContent(
+                message_text=(
+                    f"🃏 <b>{user_first_name}</b> садится за стол блэкджека!\n"
+                    f"💰 Ставка: <b>{bet:,} 🪙</b>\n\n"
+                    f"⏳ Ожидание начала игры..."
+                ),
+                parse_mode="HTML"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🃏 Начать игру",
+                    callback_data=f"bj_start_{user_id}_{bet}_0")
+            ]]),
+        )
+        _pending_bj[bj_result_id] = {
             "user_id": user_id, "bet": bet, "user_first_name": user_first_name}
-    except Exception:
-        pass
 
-    # Результат блэкджека
-    bj_result_id = f"bj_{user_id}_{bet}"
-    bj_result = InlineQueryResultArticle(
-        id=bj_result_id,
-        title=f"🃏 Блэкджек — ставка {bet:,} 🪙",
-        description="Нажмите чтобы отправить в чат",
-        input_message_content=InputTextMessageContent(
-            message_text=(
-                f"🃏 <b>{user_first_name}</b> садится за стол блэкджека!\n"
-                f"💰 Ставка: <b>{bet:,} 🪙</b>\n\n"
-                f"⏳ Ожидание начала игры..."
-            ),
-            parse_mode="HTML"),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="🃏 Начать игру",
-                callback_data=f"bj_start_{user_id}_{bet}_0")
-        ]]),
-    )
-    _pending_bj[bj_result_id] = {
-        "user_id": user_id, "bet": bet, "user_first_name": user_first_name}
+        results.append(bj_result)
 
     await inline_query.bot.answer_inline_query(
-        inline_query.id, [casino_result, bj_result], cache_time=1, is_personal=True)
+        inline_query.id, results, cache_time=1, is_personal=True)
 
 
 async def bj_chosen_result(chosen: ChosenInlineResult) -> None:
@@ -304,11 +315,11 @@ async def bj_start_handler(call: CallbackQuery) -> None:
                     except Exception:
                         pass
                 return
-            if not user.use_casino_bet():
+            if not user.use_bj_game():
                 if inline_id:
                     try:
                         await call.bot.edit_message_text(
-                            text=f"❌ <b>Лимит ставок!</b> {MAX_DAILY_BETS}/день",
+                            text=f"❌ <b>Лимит игр в блэкджек!</b> {MAX_DAILY_BJ}/день",
                             inline_message_id=inline_id, parse_mode="HTML")
                     except Exception:
                         pass
@@ -375,7 +386,7 @@ async def bj_start_handler(call: CallbackQuery) -> None:
                     await session2.commit()
 
                 dealer_reveal = calculate_hand(dealer_hand)
-                _, remaining = user2.check_casino_limit() if user2 else (False, 0)
+                _, remaining = user2.check_bj_limit() if user2 else (False, 0)
                 balance = user2.balance_vv if user2 else 0
 
                 text = (
@@ -386,7 +397,7 @@ async def bj_start_handler(call: CallbackQuery) -> None:
                     f"🃏 <b>НАТУРАЛЬНЫЙ БЛЭКДЖЕК!</b> Выигрыш x1.5!\n"
                     f"🎉 Получено: <b>+{payout:,} 🪙</b>\n\n"
                     f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
-                    f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                    f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                 )
             except Exception as e:
                 await session2.rollback()
@@ -492,7 +503,7 @@ async def bj_hit_handler(call: CallbackQuery) -> None:
                     ur = await session_db.execute(
                         select(User).where(User.tg_id == owner_id))
                     user_obj = ur.scalar_one_or_none()
-                    _, remaining = user_obj.check_casino_limit() if user_obj else (False, 0)
+                    _, remaining = user_obj.check_bj_limit() if user_obj else (False, 0)
                     balance = user_obj.balance_vv if user_obj else 0
                     dealer_reveal = calculate_hand(dealer_hand)
 
@@ -506,7 +517,7 @@ async def bj_hit_handler(call: CallbackQuery) -> None:
                         f"🔥 Сгорело (50%): <b>{burned:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
                         f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
-                        f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                        f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
                 except Exception as e:
                     await session_db.rollback()
@@ -631,7 +642,7 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                     if group:
                         await session_db.refresh(group)
                     pot = group.common_pot if group else 0
-                    _, remaining = user_obj.check_casino_limit() if user_obj else (False, 0)
+                    _, remaining = user_obj.check_bj_limit() if user_obj else (False, 0)
                     balance = user_obj.balance_vv if user_obj else 0
 
                     if dealer_score > 21:
@@ -648,7 +659,7 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                         f"🎉 Получено: <b>+{winnings:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
                         f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
-                        f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                        f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
 
                 elif player_score == dealer_score:
@@ -659,7 +670,7 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                     if group:
                         await session_db.refresh(group)
                     pot = group.common_pot if group else 0
-                    _, remaining = user_obj.check_casino_limit() if user_obj else (False, 0)
+                    _, remaining = user_obj.check_bj_limit() if user_obj else (False, 0)
                     balance = user_obj.balance_vv if user_obj else 0
 
                     text = (
@@ -671,7 +682,7 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                         f"💰 Возврат: <b>{bet:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
                         f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
-                        f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                        f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
 
                 else:
@@ -684,7 +695,7 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                     if group:
                         await session_db.refresh(group)
                     pot = group.common_pot if group else 0
-                    _, remaining = user_obj.check_casino_limit() if user_obj else (False, 0)
+                    _, remaining = user_obj.check_bj_limit() if user_obj else (False, 0)
                     balance = user_obj.balance_vv if user_obj else 0
 
                     text = (
@@ -697,7 +708,7 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                         f"🔥 Сгорело (50%): <b>{burned:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
                         f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
-                        f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                        f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
             except Exception as e:
                 await session_db.rollback()
@@ -786,7 +797,7 @@ async def bj_again_handler(call: CallbackQuery) -> None:
                 if not user.use_casino_bet():
                     try:
                         await call.bot.edit_message_text(
-                            text=f"❌ <b>Лимит ставок!</b> {MAX_DAILY_BETS}/день",
+                            text=f"❌ <b>Лимит игр в блэкджек!</b> {MAX_DAILY_BJ}/день",
                             inline_message_id=inline_id, parse_mode="HTML")
                     except Exception:
                         pass
@@ -851,7 +862,7 @@ async def bj_again_handler(call: CallbackQuery) -> None:
                         await session2.commit()
 
                     dealer_reveal = calculate_hand(dealer_hand)
-                    _, remaining = user2.check_casino_limit() if user2 else (False, 0)
+                    _, remaining = user2.check_bj_limit() if user2 else (False, 0)
                     balance = user2.balance_vv if user2 else 0
 
                     text = (
@@ -862,7 +873,7 @@ async def bj_again_handler(call: CallbackQuery) -> None:
                         f"🃏 <b>НАТУРАЛЬНЫЙ БЛЭКДЖЕК!</b> Выигрыш x1.5!\n"
                         f"🎉 Получено: <b>+{payout:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
-                        f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                        f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
                 except Exception as e:
                     await session2.rollback()

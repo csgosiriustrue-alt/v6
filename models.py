@@ -25,6 +25,7 @@ class SafeTypeEnum(PyEnum):
 MAX_BOX_COUNT = 10
 BOX_REFILL_HOURS = 2
 MAX_DAILY_BETS = 25
+MAX_DAILY_BJ = 35
 
 SECURITY_DURATION_HOURS = 6
 ROOF_DURATION_HOURS = 8
@@ -88,6 +89,9 @@ class User(Base):
 
     casino_bets_today: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_casino_reset: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    bj_games_today: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_bj_reset: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
     hazbik_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -295,6 +299,24 @@ class User(Base):
         if self.casino_bets_today >= MAX_DAILY_BETS:
             return False
         self.casino_bets_today += 1
+        return True
+
+    def _reset_daily_bj_if_needed(self) -> None:
+        today = date.today()
+        if self.last_bj_reset is None or self.last_bj_reset < today:
+            self.bj_games_today = 0
+            self.last_bj_reset = today
+
+    def check_bj_limit(self) -> tuple[bool, int]:
+        self._reset_daily_bj_if_needed()
+        remaining = max(0, MAX_DAILY_BJ - self.bj_games_today)
+        return (remaining > 0, remaining)
+
+    def use_bj_game(self) -> bool:
+        self._reset_daily_bj_if_needed()
+        if self.bj_games_today >= MAX_DAILY_BJ:
+            return False
+        self.bj_games_today += 1
         return True
 
     def increment_action(self) -> None:
