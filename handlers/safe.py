@@ -136,13 +136,7 @@ async def _build_safe_menu(session, user_id: int) -> tuple[str, InlineKeyboardMa
         hidden_text = "  <i>Пусто</i>\n"
 
     if user.safe_type == "elite":
-        health = user.elite_safe_health
-        if health >= 2:
-            durability_line = "🛡 Состояние: 🟢 <b>Новое (2/2)</b>"
-        elif health == 1:
-            durability_line = "🛡 Состояние: 🟡 <b>Повреждено (1/2)</b>"
-        else:
-            durability_line = "🛡 Состояние: 🔴 <b>Сломано (0/2)</b>"
+        durability_line = "🛡 Статус: <b>Вечный</b>"
     else:
         durability_line = f"❤️ Прочность: <b>{user.safe_health}/3</b>"
 
