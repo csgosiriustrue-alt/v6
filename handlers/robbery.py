@@ -176,21 +176,18 @@ async def _safe_answer(call: CallbackQuery, text: str = "", **kwargs):
         pass
 
 
-async def _send_robbery_notification(bot: Bot, victim: "User", robber_name: str, success: bool, amount: int = 0, used_bouncer: bool = False) -> None:
-    """Отправляет уведомление жертве о грабеже в ЛС."""
+async def _send_robbery_notification(bot: Bot, victim: "User", robber_name: str, amount: int = 0, used_bouncer: bool = False) -> None:
+    """Отправляет уведомление жертве об успешном ограблении в ЛС."""
     if not victim.notifications_enabled:
         return
 
-    if success:
-        text = f'⚠️ <b>Вас ограбили!</b>\nИгрок {robber_name} ограбил вас на {amount:,} 🪙.'
-    else:
-        text = f'🛡 <b>Попытка ограбления!</b>\nИгрок {robber_name} пытался ограбить вас, но потерпел неудачу и был пойман.'
+    text = f'⚠️ <b>Вас ограбили!</b>\nИгрок {robber_name} ограбил вас на {amount:,} 🪙.'
 
     if used_bouncer:
         text += '\n❗ Охрана была бессильна против Вышибалы!'
 
     try:
-        await bot.send_message(victim.tg_id, text, parse_mode="HTML")
+        await bot.send_message(chat_id=victim.tg_id, text=text, parse_mode="HTML")
     except Exception:
         pass  # Игнорируем ошибку Forbidden если бот заблокирован
 
@@ -1188,7 +1185,7 @@ async def rob_wallet_execute(call: CallbackQuery) -> None:
                         await grant_level_rewards(call.bot, session, robber, old_level, new_levels)
                         await session.commit()
 
-                    await _send_robbery_notification(call.bot, victim, rn, success=True, amount=actual, used_bouncer=used_bouncer)
+                    await _send_robbery_notification(call.bot, victim, rn, amount=actual, used_bouncer=used_bouncer)
 
                     gloves_text = "\n🧤 Перчатки использованы!" if hg else ""
                     lvl_text = _build_lvl_text(new_levels)
@@ -1217,8 +1214,6 @@ async def rob_wallet_execute(call: CallbackQuery) -> None:
                     if pa > 0 and chat_id:
                         await check_pot_explosion(session, chat_id, call.bot)
                     await session.commit()
-
-                    await _send_robbery_notification(call.bot, victim, rn, success=False, used_bouncer=used_bouncer)
 
                     deduct_text = ""
                     if from_safe > 0:
@@ -1491,7 +1486,7 @@ async def rob_gene_execute(call: CallbackQuery) -> None:
                         await grant_level_rewards(call.bot, session, robber, old_level, new_levels)
                         await session.commit()
 
-                    await _send_robbery_notification(call.bot, victim, rn, success=True, amount=item.price, used_bouncer=used_bouncer)
+                    await _send_robbery_notification(call.bot, victim, rn, amount=item.price, used_bouncer=used_bouncer)
 
                     gloves_text = "\n🧤 Перчатки использованы!" if hg else ""
                     lvl_text = _build_lvl_text(new_levels)
@@ -1521,8 +1516,6 @@ async def rob_gene_execute(call: CallbackQuery) -> None:
                     if pa > 0 and chat_id:
                         await check_pot_explosion(session, chat_id, call.bot)
                     await session.commit()
-
-                    await _send_robbery_notification(call.bot, victim, rn, success=False, used_bouncer=used_bouncer)
 
                     deduct_text = ""
                     if from_safe > 0:
@@ -1672,6 +1665,7 @@ async def rob_crowbar(call: CallbackQuery) -> None:
     if not _check_robber(call, rid):
         return
     iid = call.inline_message_id
+    rn = call.from_user.first_name or "Грабитель"
 
     # ── Антиспам Lock ──
     lock = _get_lock(f"crowbar_{iid}")
@@ -1718,7 +1712,7 @@ async def rob_crowbar(call: CallbackQuery) -> None:
                     if loot_rob and loot_new_levels:
                         await grant_level_rewards(call.bot, session, loot_rob, loot_old_level, loot_new_levels)
                         await session.commit()
-                    await _send_robbery_notification(call.bot, victim, rn, success=True, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer)
+                    await _send_robbery_notification(call.bot, victim, rn, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer)
                     await _safe_edit_text(
                         call.bot, inline_message_id=iid,
                         text=(
@@ -1734,8 +1728,6 @@ async def rob_crowbar(call: CallbackQuery) -> None:
                     victim.safe_health = max(0, victim.safe_health - 1)
                     await session.commit()
                     _cleanup_session(iid, rid, vid)
-
-                    await _send_robbery_notification(call.bot, victim, rn, success=False, used_bouncer=used_bouncer)
 
                     has_law, law_count = await _has_lawyer(session, rid)
                     result_btns = []
@@ -1943,7 +1935,7 @@ async def safe_submit(call: CallbackQuery) -> None:
                     if loot_rob and loot_new_levels:
                         await grant_level_rewards(call.bot, session, loot_rob, loot_old_level, loot_new_levels)
                         await session.commit()
-                    await _send_robbery_notification(call.bot, victim, rn, success=True, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer)
+                    await _send_robbery_notification(call.bot, victim, rn, amount=int(safe_coins_before * loot_percent), used_bouncer=used_bouncer)
                     await _safe_edit_text(
                         call.bot, inline_message_id=iid,
                         text=(
@@ -1999,10 +1991,6 @@ async def safe_submit(call: CallbackQuery) -> None:
                         robber.jail_until = datetime.utcnow() + timedelta(minutes=JAIL_SAFE_FAIL_MINUTES)
                         await session.commit()
                         _cleanup_session(iid, rid, vid)
-
-                        rn = call.from_user.first_name or "Грабитель"
-                        used_bouncer = sess.get("used_bouncer", False)
-                        await _send_robbery_notification(call.bot, victim, rn, success=False, used_bouncer=used_bouncer)
 
                         health_line = f"❤️ Прочность сейфа: {victim.safe_health}/3\n" if victim.safe_type == "rusty" else ""
                         has_law, law_count = await _has_lawyer(session, rid)
