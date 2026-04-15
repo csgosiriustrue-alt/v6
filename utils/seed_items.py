@@ -180,17 +180,51 @@ async def seed_items(session: AsyncSession) -> None:
     if disabled > 0:
         logger.info(f"🧬 Отключено {disabled} старых")
 
-    # ── Удаляем дубликаты по имени (оставляем только первый) ──
+    # ── Удаляем дубликаты по имени (оставляем первый, мигрируем Inventory и hidden_item_ids) ──
+    from models import Inventory, User
     all_items_r = await session.execute(select(Item).order_by(Item.id.asc()))
     all_items = all_items_r.scalars().all()
     seen_names: dict[str, int] = {}
     dupes_removed = 0
     for item in all_items:
         if item.name in seen_names:
+            canonical_id = seen_names[item.name]
+            dupe_id = item.id
+
+            # 1. Мигрируем Inventory: переносим количества с дубликата на canonical item_id
+            dupe_invs = (await session.execute(
+                select(Inventory).where(Inventory.item_id == dupe_id))).scalars().all()
+            if dupe_invs:
+                dupe_user_ids = [inv.user_id for inv in dupe_invs]
+                canon_invs_r = await session.execute(
+                    select(Inventory).where(
+                        Inventory.item_id == canonical_id,
+                        Inventory.user_id.in_(dupe_user_ids)))
+                canon_invs_by_user = {inv.user_id: inv for inv in canon_invs_r.scalars().all()}
+                for dupe_inv in dupe_invs:
+                    canon_inv = canon_invs_by_user.get(dupe_inv.user_id)
+                    if canon_inv:
+                        canon_inv.quantity += dupe_inv.quantity
+                        await session.delete(dupe_inv)
+                    else:
+                        dupe_inv.item_id = canonical_id
+
+            # 2. Мигрируем hidden_item_ids в сейфах (JSON поле User)
+            users_r = await session.execute(select(User).where(User.hidden_item_ids.isnot(None)))
+            for user in users_r.scalars().all():
+                if user.hidden_item_ids and dupe_id in user.hidden_item_ids:
+                    user.hidden_item_ids = [
+                        canonical_id if x == dupe_id else x for x in user.hidden_item_ids
+                    ]
+
+            await session.flush()
+
+            # 3. Теперь безопасно удаляем дубликат Item
             await session.delete(item)
             dupes_removed += 1
+            logger.info(f"🗑 Дубликат '{item.name}' (id={dupe_id}) → каноничный id={canonical_id}")
         else:
             seen_names[item.name] = item.id
     if dupes_removed > 0:
         await session.flush()
-        logger.info(f"🗑 Удалено {dupes_removed} дубликатов предметов")
+        logger.info(f"🗑 Удалено {dupes_removed} дубликатов предметов (inventory мигрирован)")

@@ -30,8 +30,8 @@ BOOST_ITEM_NAMES = {"Журнал для взрослых", "Резиновая 
 CHARGE_ITEM_NAME = "Заряд теребления"
 SAFE_ITEM_NAMES = {"Ржавый Сейф", "Элитный Сейф"}
 
-# Категории магазина (Крыша и Путана УБРАНЫ из обычного магазина)
-CATEGORY_BOOSTS = {"Журнал для взрослых", "Резиновая кукла"}
+# Категории магазина (Крыша УБРАНА из обычного магазина — только Чёрный рынок)
+CATEGORY_BOOSTS = {"Журнал для взрослых", "Резиновая кукла", "Путана"}
 CATEGORY_DEFENSE = {"Ржавый Сейф", "Элитный Сейф", "Охрана"}
 CATEGORY_TOOLS = {"Отмычка", "Лом", "Адвокат", "Липкие Перчатки", "Вышибала"}
 
@@ -167,7 +167,7 @@ async def _show_shop_categories(message: Message) -> None:
         "<b>🏢 Магазин Gift Heist</b>\n\n"
         "⭐ Stars — Telegram Stars (без лимитов!)\n"
         "🪙 Монеты — внутриигровая валюта\n\n"
-        "🖤 Крыша и Путана — только на Чёрном рынке!\n\n"
+        "🖤 Крыша — только на Чёрном рынке!\n\n"
         "Выбери категорию 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
@@ -774,7 +774,7 @@ async def _show_bm_closed(message):
         "🏚 <b>Черный рынок скрыт в тенях...</b>\n\n"
         "Шанс <b>7.77%</b> раз в сутки.\n"
         "<i>Приходи завтра.</i>\n\n"
-        "💡 <i>Крыша и Путана продаются только здесь!</i>",
+        "💡 <i>Крыша продаётся только здесь!</i>",
         parse_mode="HTML", reply_markup=get_main_keyboard())
 
 
@@ -817,7 +817,7 @@ async def _show_bm_menu(message, session, user):
         f"⏳ Закроется через <b>{h}ч {m}мин</b>\n"
         f"⚠️ Каждый товар — <b>1 шт.</b> за визит\n"
         f"💰 Скидка <b>25%</b> на всё (кроме фигурки)\n"
-        f"🖤 <i>Крыша и Путана — эксклюзив ЧР!</i>\n\n"
+        f"🖤 <i>Крыша — эксклюзив ЧР!</i>\n\n"
         f"Выбери товар 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
