@@ -57,6 +57,14 @@ def _bj_keyboard(owner_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
+def _bj_again_keyboard(owner_id: int, bet: int, chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="🔄 Играть снова",
+            callback_data=f"bj_again_{owner_id}_{bet}_{chat_id}"),
+    ]])
+
+
 def _game_text(session_data: dict, hide_dealer: bool = True) -> str:
     player = session_data["player_hand"]
     dealer = session_data["dealer_hand"]
@@ -389,7 +397,8 @@ async def bj_start_handler(call: CallbackQuery) -> None:
         if inline_id:
             try:
                 await call.bot.edit_message_text(
-                    text=text, inline_message_id=inline_id, parse_mode="HTML")
+                    text=text, inline_message_id=inline_id, parse_mode="HTML",
+                    reply_markup=_bj_again_keyboard(owner_id, bet, chat_id))
             except Exception as e:
                 if "MessageNotModified" not in str(e):
                     logger.error(f"❌ bj edit natural: {e}")
@@ -507,7 +516,8 @@ async def bj_hit_handler(call: CallbackQuery) -> None:
 
             try:
                 await call.bot.edit_message_text(
-                    text=text, inline_message_id=inline_id, parse_mode="HTML")
+                    text=text, inline_message_id=inline_id, parse_mode="HTML",
+                    reply_markup=_bj_again_keyboard(owner_id, bet, chat_id))
             except Exception as e:
                 if "MessageNotModified" not in str(e):
                     logger.error(f"❌ bj edit bust: {e}")
@@ -697,7 +707,8 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
 
         try:
             await call.bot.edit_message_text(
-                text=text, inline_message_id=inline_id, parse_mode="HTML")
+                text=text, inline_message_id=inline_id, parse_mode="HTML",
+                reply_markup=_bj_again_keyboard(owner_id, bet, chat_id))
         except Exception as e:
             if "MessageNotModified" not in str(e):
                 logger.error(f"❌ bj edit stand: {e}")
@@ -705,3 +716,179 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
         _bj_sessions.pop(inline_id, None)
         _bj_owner_map.pop(owner_id, None)
         _bj_locks.pop(owner_id, None)
+
+
+# ============================================================================
+# ИГРАТЬ СНОВА (реванш)
+# ============================================================================
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("bj_again_"))
+async def bj_again_handler(call: CallbackQuery) -> None:
+    try:
+        parts = call.data.split("_")
+        # bj_again_{owner_id}_{bet}_{chat_id}
+        owner_id = int(parts[2])
+        bet = int(parts[3])
+        chat_id = int(parts[4]) if len(parts) > 4 else 0
+    except (ValueError, IndexError):
+        await call.answer("❌ Ошибка данных!", show_alert=True)
+        return
+
+    if call.from_user.id != owner_id:
+        await call.answer("❌ Не твоя игра!", show_alert=True)
+        return
+
+    await call.answer()
+
+    inline_id = call.inline_message_id or _bj_owner_map.get(owner_id)
+    if not inline_id:
+        return
+
+    # Защита от двойного нажатия
+    if owner_id not in _bj_locks:
+        _bj_locks[owner_id] = asyncio.Lock()
+    lock = _bj_locks[owner_id]
+    if lock.locked():
+        return
+
+    async with lock:
+        user_first_name = call.from_user.first_name or "Игрок"
+
+        # Проверяем баланс и лимит ставок
+        db = get_db()
+        async for session in db.get_session():
+            try:
+                await track_chat_activity(session, chat_id, owner_id)
+                ur = await session.execute(select(User).where(User.tg_id == owner_id))
+                user = ur.scalar_one_or_none()
+                if not user:
+                    try:
+                        await call.bot.edit_message_text(
+                            text="❌ /start в ЛС бота!",
+                            inline_message_id=inline_id, parse_mode="HTML")
+                    except Exception:
+                        pass
+                    return
+                if user.balance_vv < bet:
+                    balance = user.balance_vv
+                    try:
+                        await call.bot.edit_message_text(
+                            text=(
+                                f"❌ Недостаточно средств для повторной ставки ({bet:,} 🪙)!\n"
+                                f"💼 Баланс: {balance:,} 🪙"
+                            ),
+                            inline_message_id=inline_id, parse_mode="HTML")
+                    except Exception as e:
+                        if "MessageNotModified" not in str(e):
+                            logger.error(f"❌ bj again no funds: {e}")
+                    return
+                if not user.use_casino_bet():
+                    try:
+                        await call.bot.edit_message_text(
+                            text=f"❌ <b>Лимит ставок!</b> {MAX_DAILY_BETS}/день",
+                            inline_message_id=inline_id, parse_mode="HTML")
+                    except Exception:
+                        pass
+                    await session.commit()
+                    return
+                user.balance_vv -= bet
+                user.increment_action()
+                await session.commit()
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"❌ bj_again bet: {e}", exc_info=True)
+                try:
+                    await call.bot.edit_message_text(
+                        text="❌ Ошибка при списании ставки!",
+                        inline_message_id=inline_id, parse_mode="HTML")
+                except Exception:
+                    pass
+                return
+            finally:
+                await session.close()
+
+        # Раздача карт
+        deck = _make_deck()
+        player_hand = [deck.pop(), deck.pop()]
+        dealer_hand = [deck.pop(), deck.pop()]
+
+        session_data = {
+            "owner_id": owner_id,
+            "owner_name": user_first_name,
+            "bet": bet,
+            "chat_id": chat_id,
+            "deck": deck,
+            "player_hand": player_hand,
+            "dealer_hand": dealer_hand,
+        }
+
+        _bj_sessions[inline_id] = session_data
+        _bj_owner_map[owner_id] = inline_id
+        remember_chat(owner_id, chat_id)
+
+        player_score = calculate_hand(player_hand)
+
+        # Натуральный блэкджек при реванше
+        if player_score == 21:
+            winnings = int(bet * 1.5)
+            payout = bet + winnings
+            text = "❌ Ошибка финала игры!"
+
+            db2 = get_db()
+            async for session2 in db2.get_session():
+                try:
+                    ur2 = await session2.execute(select(User).where(User.tg_id == owner_id))
+                    user2 = ur2.scalar_one_or_none()
+                    new_levels = []
+                    if user2:
+                        user2.balance_vv += payout
+                        old_level = user2.level
+                        new_levels = add_xp(user2, winnings)
+                    await session2.commit()
+                    if user2 and new_levels:
+                        await grant_level_rewards(call.bot, session2, user2, old_level, new_levels)
+                        await session2.commit()
+
+                    dealer_reveal = calculate_hand(dealer_hand)
+                    _, remaining = user2.check_casino_limit() if user2 else (False, 0)
+                    balance = user2.balance_vv if user2 else 0
+
+                    text = (
+                        f"🃏 <b>БЛЭКДЖЕК</b>\n\n"
+                        f"👤 Ваши карты:\n  {_hand_str(player_hand)} ({player_score} очков)\n\n"
+                        f"🎩 Дилер:\n  {_hand_str(dealer_hand)} ({dealer_reveal} очков)\n\n"
+                        f"💰 Ставка: {bet:,} 🪙\n"
+                        f"🃏 <b>НАТУРАЛЬНЫЙ БЛЭКДЖЕК!</b> Выигрыш x1.5!\n"
+                        f"🎉 Получено: <b>+{payout:,} 🪙</b>\n\n"
+                        f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
+                        f"🎰 Ставки: {remaining}/{MAX_DAILY_BETS}"
+                    )
+                except Exception as e:
+                    await session2.rollback()
+                    logger.error(f"❌ bj again natural: {e}", exc_info=True)
+                finally:
+                    await session2.close()
+
+            try:
+                await call.bot.edit_message_text(
+                    text=text, inline_message_id=inline_id, parse_mode="HTML",
+                    reply_markup=_bj_again_keyboard(owner_id, bet, chat_id))
+            except Exception as e:
+                if "MessageNotModified" not in str(e):
+                    logger.error(f"❌ bj again edit natural: {e}")
+            _bj_sessions.pop(inline_id, None)
+            _bj_owner_map.pop(owner_id, None)
+            _bj_locks.pop(owner_id, None)
+            return
+
+        # Обычное начало новой игры — редактируем старое финальное сообщение
+        text = _game_text(session_data)
+        try:
+            await call.bot.edit_message_text(
+                text=text, inline_message_id=inline_id,
+                parse_mode="HTML", reply_markup=_bj_keyboard(owner_id))
+        except Exception as e:
+            if "MessageNotModified" not in str(e):
+                logger.error(f"❌ bj again edit start: {e}")
+
