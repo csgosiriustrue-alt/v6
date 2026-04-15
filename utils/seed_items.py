@@ -192,19 +192,22 @@ async def seed_items(session: AsyncSession) -> None:
             dupe_id = item.id
 
             # 1. Мигрируем Inventory: переносим количества с дубликата на canonical item_id
-            dupe_inv_r = await session.execute(
-                select(Inventory).where(Inventory.item_id == dupe_id))
-            for dupe_inv in dupe_inv_r.scalars().all():
-                canon_inv_r = await session.execute(
+            dupe_invs = (await session.execute(
+                select(Inventory).where(Inventory.item_id == dupe_id))).scalars().all()
+            if dupe_invs:
+                dupe_user_ids = [inv.user_id for inv in dupe_invs]
+                canon_invs_r = await session.execute(
                     select(Inventory).where(
-                        Inventory.user_id == dupe_inv.user_id,
-                        Inventory.item_id == canonical_id))
-                canon_inv = canon_inv_r.scalar_one_or_none()
-                if canon_inv:
-                    canon_inv.quantity += dupe_inv.quantity
-                    await session.delete(dupe_inv)
-                else:
-                    dupe_inv.item_id = canonical_id
+                        Inventory.item_id == canonical_id,
+                        Inventory.user_id.in_(dupe_user_ids)))
+                canon_invs_by_user = {inv.user_id: inv for inv in canon_invs_r.scalars().all()}
+                for dupe_inv in dupe_invs:
+                    canon_inv = canon_invs_by_user.get(dupe_inv.user_id)
+                    if canon_inv:
+                        canon_inv.quantity += dupe_inv.quantity
+                        await session.delete(dupe_inv)
+                    else:
+                        dupe_inv.item_id = canonical_id
 
             # 2. Мигрируем hidden_item_ids в сейфах (JSON поле User)
             users_r = await session.execute(select(User).where(User.hidden_item_ids.isnot(None)))
@@ -217,12 +220,9 @@ async def seed_items(session: AsyncSession) -> None:
             await session.flush()
 
             # 3. Теперь безопасно удаляем дубликат Item
-            dupe_item_r = await session.execute(select(Item).where(Item.id == dupe_id))
-            dupe_item = dupe_item_r.scalar_one_or_none()
-            if dupe_item:
-                await session.delete(dupe_item)
-                dupes_removed += 1
-                logger.info(f"🗑 Дубликат '{item.name}' (id={dupe_id}) → каноничный id={canonical_id}")
+            await session.delete(item)
+            dupes_removed += 1
+            logger.info(f"🗑 Дубликат '{item.name}' (id={dupe_id}) → каноничный id={canonical_id}")
         else:
             seen_names[item.name] = item.id
     if dupes_removed > 0:
