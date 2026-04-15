@@ -247,26 +247,43 @@ async def activate_boost(session: AsyncSession, user: User, item_name: str) -> t
     duration = timedelta(hours=24)
 
     if item_name == "Журнал для взрослых":
-        user.magazine_until = now + duration
+        if user.magazine_until and user.magazine_until > now:
+            user.magazine_until = user.magazine_until + duration
+        else:
+            user.magazine_until = now + duration
         return True, "🔞 Журнал активирован! КД теребления: 2ч на 24ч."
     elif item_name == "Резиновая кукла":
-        user.doll_until = now + duration
+        if user.doll_until and user.doll_until > now:
+            user.doll_until = user.doll_until + duration
+        else:
+            user.doll_until = now + duration
         return True, "🫦 Кукла активирована! x2 шанс топ-тир на 24ч."
     elif item_name == "Путана":
-        user.putana_until = now + duration
+        if user.putana_until and user.putana_until > now:
+            user.putana_until = user.putana_until + duration
+        else:
+            user.putana_until = now + duration
         return True, "💋 Путана активирована! x7 шанс редких, эпик и легенд. генов на 24ч."
     return False, "Неизвестный буст"
 
 
 async def activate_security(session: AsyncSession, user: User) -> tuple[bool, str]:
     from models import SECURITY_DURATION_HOURS
-    user.security_active = True
-    user.security_until = datetime.utcnow() + timedelta(hours=SECURITY_DURATION_HOURS)
+    now = datetime.utcnow()
+    if user.security_until and user.security_until > now:
+        user.security_until = user.security_until + timedelta(hours=SECURITY_DURATION_HOURS)
+    else:
+        user.security_active = True
+        user.security_until = now + timedelta(hours=SECURITY_DURATION_HOURS)
     return True, f"💂 Охрана активирована на {SECURITY_DURATION_HOURS}ч!"
 
 
 async def activate_roof(session: AsyncSession, user: User) -> tuple[bool, str]:
     from models import ROOF_DURATION_HOURS
-    user.roof_active = True
-    user.roof_until = datetime.utcnow() + timedelta(hours=ROOF_DURATION_HOURS)
+    now = datetime.utcnow()
+    if user.roof_until and user.roof_until > now:
+        user.roof_until = user.roof_until + timedelta(hours=ROOF_DURATION_HOURS)
+    else:
+        user.roof_active = True
+        user.roof_until = now + timedelta(hours=ROOF_DURATION_HOURS)
     return True, f"🕴 Крыша активирована на {ROOF_DURATION_HOURS}ч!"
