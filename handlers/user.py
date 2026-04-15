@@ -28,7 +28,11 @@ TOOL_NAMES = {
     "Durov's Figure", "Заряд теребления",
 }
 
-PHANTOM_SAFE_NAMES = {"Ржавый Сейф", "Элитный Сейф"}
+PHANTOM_ACTIVATABLE_NAMES = {
+    "Ржавый Сейф", "Элитный Сейф",
+    "Охрана", "Крыша",
+    "Журнал для взрослых", "Резиновая кукла", "Путана",
+}
 
 STARTER_ITEMS = ["Адвокат", "Стетоскоп", "Отмычка"]
 
@@ -144,8 +148,8 @@ async def build_inventory_text(user_id: int, session) -> str:
     genes = []
     for inv in inv_items:
         item = inv.item
-        # Пропускаем фантомные сейфы (они должны быть в полях User, не в inventory)
-        if item.name in PHANTOM_SAFE_NAMES:
+        # Пропускаем фантомные активируемые предметы (они должны быть в полях User, не в inventory)
+        if item.name in PHANTOM_ACTIVATABLE_NAMES:
             continue
         line = f"{format_emoji(str(item.emoji))} <b>{item.name}</b> — {inv.quantity} шт."
         if item.drop_chance > 0:
@@ -404,8 +408,8 @@ async def _handle_inventory_dm(message: Message) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            # Чистим фантомные сейфы из inventory через JOIN на уровне БД
-            phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_SAFE_NAMES))
+            # Чистим фантомные активируемые предметы из inventory через JOIN на уровне БД
+            phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
             await session.execute(
                 delete(Inventory).where(
                     Inventory.user_id == user_id,

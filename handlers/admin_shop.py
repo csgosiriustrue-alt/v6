@@ -213,20 +213,7 @@ async def ashop_buy(call: CallbackQuery) -> None:
                 activation_msg = await _admin_handle_activation(session, user, item, qty)
             else:
                 # Обычные предметы — в inventory
-                ok, msg = await add_item_to_inventory(session, user_id, item_id, qty)
-                if not ok:
-                    # Если add_item_to_inventory проверяет лимит — добавляем напрямую
-                    from models import Inventory
-                    inv_r = await session.execute(
-                        select(Inventory).where(
-                            Inventory.user_id == user_id,
-                            Inventory.item_id == item_id))
-                    inv = inv_r.scalar_one_or_none()
-                    if inv:
-                        inv.quantity += qty
-                    else:
-                        new_inv = Inventory(user_id=user_id, item_id=item_id, quantity=qty)
-                        session.add(new_inv)
+                await add_item_to_inventory(session, user_id, item_id, qty)
 
             await session.commit()
 
@@ -336,19 +323,7 @@ async def ashop_custom_quantity(message: Message) -> None:
             if _is_activatable(item.name):
                 activation_msg = await _admin_handle_activation(session, user, item, qty)
             else:
-                ok, msg = await add_item_to_inventory(session, user_id, item_id, qty)
-                if not ok:
-                    from models import Inventory
-                    inv_r = await session.execute(
-                        select(Inventory).where(
-                            Inventory.user_id == user_id,
-                            Inventory.item_id == item_id))
-                    inv = inv_r.scalar_one_or_none()
-                    if inv:
-                        inv.quantity += qty
-                    else:
-                        new_inv = Inventory(user_id=user_id, item_id=item_id, quantity=qty)
-                        session.add(new_inv)
+                await add_item_to_inventory(session, user_id, item_id, qty)
 
             await session.commit()
 
