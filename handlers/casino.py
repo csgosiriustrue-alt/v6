@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from database import get_db
 from models import User, GroupChat, MAX_DAILY_BETS
-from utils.casino_utils import calculate_winnings, MIN_BET, MAX_COMMON_POT, POT_PERCENT
+from utils.casino_utils import calculate_winnings, MIN_BET, MAX_BET, MAX_COMMON_POT, POT_PERCENT
 from utils.keyboards import get_casino_keyboard
 from utils.pot_event import track_chat_activity, check_pot_explosion, POT_EXPLOSION_THRESHOLD
 from utils.levels import add_xp, grant_level_rewards
@@ -99,6 +99,9 @@ async def text_casino_handler(message: Message) -> None:
     if bet < MIN_BET:
         await message.reply(f"❌ Минимум: <b>{MIN_BET} 🪙</b>", parse_mode="HTML")
         return
+    if bet > MAX_BET:
+        await message.reply(f"❌ Максимум: <b>{MAX_BET:,} 🪙</b>", parse_mode="HTML")
+        return
     await _play_casino(bot=message.bot, user_id=user_id, user_first_name=user_first_name,
         chat_id=chat_id, bet=bet, reply_to_message_id=message.message_id)
 
@@ -113,7 +116,7 @@ async def _play_casino(bot, user_id, user_first_name, chat_id, bet, reply_to_mes
     async for session in db.get_session():
         try:
             await track_chat_activity(session, chat_id, user_id)
-            ur = await session.execute(select(User).where(User.tg_id == user_id))
+            ur = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = ur.scalar_one_or_none()
             if not user:
                 try:
@@ -266,6 +269,13 @@ async def casino_inline_handler(inline_query: InlineQuery) -> None:
                 message_text=f"❌ Минимум: <b>{MIN_BET} 🪙</b>", parse_mode="HTML"))
         await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
         return
+    if bet > MAX_BET:
+        r = InlineQueryResultArticle(id="casino_high_bet", title=f"❌ Максимум: {MAX_BET:,} 🪙",
+            description=f"Максимум — {MAX_BET:,}.",
+            input_message_content=InputTextMessageContent(
+                message_text=f"❌ Максимум: <b>{MAX_BET:,} 🪙</b>", parse_mode="HTML"))
+        await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
+        return
 
     db = get_db()
     has_funds = False
@@ -346,6 +356,9 @@ async def casino_spin_handler(call: CallbackQuery) -> None:
     if owner_id != user_id:
         await call.answer("❌ Не твоя ставка!", show_alert=True)
         return
+    if bet < MIN_BET or bet > MAX_BET:
+        await call.answer("❌ Некорректная ставка!", show_alert=True)
+        return
 
     # ══════════════════════════════════════════════════════════════════
     # Цепочка определения chat_id (от наиболее надёжного к запасному)
@@ -417,7 +430,7 @@ async def _play_casino_inline(bot, user_id, user_first_name, chat_id, bet, inlin
     async for session in db.get_session():
         try:
             await track_chat_activity(session, chat_id, user_id)
-            ur = await session.execute(select(User).where(User.tg_id == user_id))
+            ur = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = ur.scalar_one_or_none()
             if not user or user.balance_vv < bet:
                 if inline_id:

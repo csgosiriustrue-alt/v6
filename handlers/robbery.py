@@ -2,6 +2,7 @@
 import logging
 import random
 import asyncio
+import time
 from datetime import datetime, timedelta
 from aiogram import Router, Bot
 from aiogram.types import (
@@ -57,6 +58,7 @@ WITNESS_CHANCE = 0.05
 MIN_BALANCE_TO_ROB = 200
 INACTIVITY_TIMEOUT_SECONDS = 60
 INACTIVITY_PENALTY = 200
+VICTIM_LOCK_TIMEOUT_SECONDS = 120  # Максимальное время блокировки жертвы
 
 _robbery_sessions: dict[str, dict] = {}
 _pending_robberies: dict[str, dict] = {}
@@ -206,26 +208,45 @@ def _build_lvl_text(new_levels: list[int]) -> str:
 
 
 # ============================================================================
-# БЛОКИРОВКА ЖЕРТВЫ
+# БЛОКИРОВКА ЖЕРТВЫ (с таймаутом)
 # ============================================================================
-_victim_locks: dict[int, int] = {}
+_victim_locks: dict[int, tuple[int, float]] = {}  # victim_id → (robber_id, monotonic timestamp)
+
+
+def _is_lock_expired(locked_at: float) -> bool:
+    """Проверяет, истёк ли таймаут блокировки (monotonic time)."""
+    return time.monotonic() - locked_at > VICTIM_LOCK_TIMEOUT_SECONDS
 
 
 def _lock_victim(victim_id: int, robber_id: int) -> bool:
     if victim_id in _victim_locks:
-        return _victim_locks[victim_id] == robber_id
-    _victim_locks[victim_id] = robber_id
+        locked_robber, locked_at = _victim_locks[victim_id]
+        if _is_lock_expired(locked_at):
+            logger.warning(f"⏰ Автоснятие просроченной блокировки жертвы {victim_id} (грабитель {locked_robber})")
+            _victim_locks.pop(victim_id, None)
+        elif locked_robber == robber_id:
+            return True
+        else:
+            return False
+    _victim_locks[victim_id] = (robber_id, time.monotonic())
     return True
 
 
 def _unlock_victim(victim_id: int, robber_id: int) -> None:
-    if _victim_locks.get(victim_id) == robber_id:
+    entry = _victim_locks.get(victim_id)
+    if entry and entry[0] == robber_id:
         _victim_locks.pop(victim_id, None)
 
 
 def _is_victim_locked(victim_id: int, robber_id: int) -> bool:
-    locker = _victim_locks.get(victim_id)
-    return locker is not None and locker != robber_id
+    entry = _victim_locks.get(victim_id)
+    if entry is None:
+        return False
+    locked_robber, locked_at = entry
+    if _is_lock_expired(locked_at):
+        _victim_locks.pop(victim_id, None)
+        return False
+    return locked_robber != robber_id
 
 
 # ============================================================================
@@ -277,7 +298,7 @@ async def _inactivity_timeout_handler(iid: str, rid: int, vid: int) -> None:
 
     async for session in db.get_session():
         try:
-            rr = await session.execute(select(User).where(User.tg_id == rid))
+            rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
             robber = rr.scalar_one_or_none()
             if robber:
                 penalty_applied = min(INACTIVITY_PENALTY, max(0, robber.balance_vv))
@@ -285,7 +306,7 @@ async def _inactivity_timeout_handler(iid: str, rid: int, vid: int) -> None:
                 robber.is_robbing_now = False
                 robber.robbing_started_at = None
 
-            vr = await session.execute(select(User).where(User.tg_id == vid))
+            vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
             victim = vr.scalar_one_or_none()
             if victim:
                 victim.is_being_robbed = False
@@ -473,7 +494,7 @@ async def robbery_inline_handler(inline_query: InlineQuery) -> None:
     async for session in db.get_session():
         try:
             victim = await _find_victim(session, target_input)
-            rr = await session.execute(select(User).where(User.tg_id == robber_id))
+            rr = await session.execute(select(User).where(User.tg_id == robber_id).with_for_update())
             robber = rr.scalar_one_or_none()
         except Exception as e:
             logger.error(f"❌: {e}")
@@ -655,9 +676,9 @@ async def _show_back_to_targets(call, robber_id, victim_id):
     db = get_db()
     async for session in db.get_session():
         try:
-            rr = await session.execute(select(User).where(User.tg_id == robber_id))
+            rr = await session.execute(select(User).where(User.tg_id == robber_id).with_for_update())
             robber = rr.scalar_one_or_none()
-            vr = await session.execute(select(User).where(User.tg_id == victim_id))
+            vr = await session.execute(select(User).where(User.tg_id == victim_id).with_for_update())
             victim = vr.scalar_one_or_none()
             if not robber or not victim:
                 _cleanup_session(iid, robber_id, victim_id)
@@ -746,7 +767,7 @@ async def _show_target_choice(call, robber_id, victim_id):
                 await track_chat_activity(session, cid, robber_id)
                 await track_chat_activity(session, cid, victim_id)
 
-            rr = await session.execute(select(User).where(User.tg_id == robber_id))
+            rr = await session.execute(select(User).where(User.tg_id == robber_id).with_for_update())
             robber = rr.scalar_one_or_none()
             if not robber:
                 return
@@ -781,7 +802,7 @@ async def _show_target_choice(call, robber_id, victim_id):
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=btns) if btns else None)
                 return
 
-            vr = await session.execute(select(User).where(User.tg_id == victim_id))
+            vr = await session.execute(select(User).where(User.tg_id == victim_id).with_for_update())
             victim = vr.scalar_one_or_none()
             if not victim:
                 return
@@ -972,9 +993,9 @@ async def rob_wallet_percent(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            vr = await session.execute(select(User).where(User.tg_id == vid))
+            vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
             victim = vr.scalar_one_or_none()
-            rr = await session.execute(select(User).where(User.tg_id == rid))
+            rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
             robber = rr.scalar_one_or_none()
             if not victim or not robber:
                 return
@@ -1074,9 +1095,9 @@ async def rob_wallet_execute(call: CallbackQuery) -> None:
         async for session in db.get_session():
             try:
                 await _track_both(session, call, rid, vid)
-                rr = await session.execute(select(User).where(User.tg_id == rid))
+                rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
                 robber = rr.scalar_one_or_none()
-                vr = await session.execute(select(User).where(User.tg_id == vid))
+                vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
                 victim = vr.scalar_one_or_none()
                 if not robber or not victim:
                     _cleanup_session(iid, rid, vid)
@@ -1280,9 +1301,9 @@ async def rob_genes_list(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            vr = await session.execute(select(User).where(User.tg_id == vid))
+            vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
             victim = vr.scalar_one_or_none()
-            rr = await session.execute(select(User).where(User.tg_id == rid))
+            rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
             robber = rr.scalar_one_or_none()
             if not victim or not robber:
                 return
@@ -1371,9 +1392,9 @@ async def rob_gene_execute(call: CallbackQuery) -> None:
         async for session in db.get_session():
             try:
                 await _track_both(session, call, rid, vid)
-                rr = await session.execute(select(User).where(User.tg_id == rid))
+                rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
                 robber = rr.scalar_one_or_none()
-                vr = await session.execute(select(User).where(User.tg_id == vid))
+                vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
                 victim = vr.scalar_one_or_none()
                 if not robber or not victim:
                     _cleanup_session(iid, rid, vid)
@@ -1578,11 +1599,11 @@ async def rob_safe_recon(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            vr = await session.execute(select(User).where(User.tg_id == vid))
+            vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
             victim = vr.scalar_one_or_none()
             if not victim or not victim.has_active_safe():
                 return
-            rr = await session.execute(select(User).where(User.tg_id == rid))
+            rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
             robber = rr.scalar_one_or_none()
             if not robber:
                 return
@@ -1678,9 +1699,9 @@ async def rob_crowbar(call: CallbackQuery) -> None:
         async for session in db.get_session():
             try:
                 await _track_both(session, call, rid, vid)
-                rr = await session.execute(select(User).where(User.tg_id == rid))
+                rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
                 robber = rr.scalar_one_or_none()
-                vr = await session.execute(select(User).where(User.tg_id == vid))
+                vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
                 victim = vr.scalar_one_or_none()
                 if not victim or not victim.has_active_safe():
                     _cleanup_session(iid, rid, vid)
@@ -1778,7 +1799,7 @@ async def rob_safe_start(call: CallbackQuery) -> None:
     async for session in db.get_session():
         try:
             await _track_both(session, call, rid, vid)
-            vr = await session.execute(select(User).where(User.tg_id == vid))
+            vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
             victim = vr.scalar_one_or_none()
             if not victim or not victim.has_active_safe():
                 _cleanup_session(iid, rid, vid)
@@ -1916,9 +1937,9 @@ async def safe_submit(call: CallbackQuery) -> None:
 
         async for session in db.get_session():
             try:
-                rr = await session.execute(select(User).where(User.tg_id == rid))
+                rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
                 robber = rr.scalar_one_or_none()
-                vr = await session.execute(select(User).where(User.tg_id == vid))
+                vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
                 victim = vr.scalar_one_or_none()
                 if not victim or not victim.has_active_safe():
                     _cleanup_session(iid, rid, vid)
@@ -2090,7 +2111,7 @@ async def safe_use_lockpick(call: CallbackQuery) -> None:
                 revealed = set(sess.get("revealed", []))
                 masked = _mask_code(code, revealed)
 
-                vr = await session.execute(select(User).where(User.tg_id == vid))
+                vr = await session.execute(select(User).where(User.tg_id == vid).with_for_update())
                 victim = vr.scalar_one_or_none()
 
                 health_line = ""
@@ -2137,7 +2158,7 @@ async def safe_giveup(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            rr = await session.execute(select(User).where(User.tg_id == rid))
+            rr = await session.execute(select(User).where(User.tg_id == rid).with_for_update())
             robber = rr.scalar_one_or_none()
             if robber:
                 robber.jail_until = datetime.utcnow() + timedelta(minutes=JAIL_SAFE_FAIL_MINUTES)
@@ -2194,7 +2215,7 @@ async def _loot_safe(session, robber_id, victim):
         victim.hidden_item_ids = []
 
     if victim.hidden_coins and victim.hidden_coins > 0:
-        rr = await session.execute(select(User).where(User.tg_id == robber_id))
+        rr = await session.execute(select(User).where(User.tg_id == robber_id).with_for_update())
         rob = rr.scalar_one_or_none()
         attacker_total = (rob.balance_vv + (rob.hidden_coins or 0)) if rob else 0
         victim_total = victim.balance_vv + (victim.hidden_coins or 0)

@@ -25,6 +25,7 @@ router = Router()
 
 _TRANSFER_RE = re.compile(r"^\s*(\d+)\s+@(\w+)\s*$")
 TRANSFER_FEE = 0.03
+MAX_TRANSFER_AMOUNT = 50_000_000  # Максимальная сумма перевода
 _pending_transfers: dict[str, dict] = {}
 
 _TG_ID_THRESHOLD = 1_000_000_000
@@ -174,6 +175,15 @@ async def transfer_inline_handler(inline_query: InlineQuery) -> None:
         await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
         return
 
+    if amount > MAX_TRANSFER_AMOUNT:
+        r = InlineQueryResultArticle(
+            id="transfer_too_much", title=f"❌ Максимум: {MAX_TRANSFER_AMOUNT:,} 🪙",
+            description=f"Максимальная сумма перевода — {MAX_TRANSFER_AMOUNT:,} 🪙",
+            input_message_content=InputTextMessageContent(
+                message_text=f"❌ Максимум: <b>{MAX_TRANSFER_AMOUNT:,} 🪙</b>", parse_mode="HTML"))
+        await inline_query.bot.answer_inline_query(inline_query.id, [r], cache_time=1, is_personal=True)
+        return
+
     fee = int(amount * TRANSFER_FEE)
     total_cost = amount + fee
 
@@ -318,15 +328,19 @@ async def transfer_confirm_handler(call: CallbackQuery) -> None:
         await call.answer("❌ Это не ваш перевод!", show_alert=True)
         return
 
+    if amount <= 0 or amount > MAX_TRANSFER_AMOUNT:
+        await call.answer("❌ Некорректная сумма!", show_alert=True)
+        return
+
     fee = int(amount * TRANSFER_FEE)
     total_cost = amount + fee
 
     db = get_db()
     async for session in db.get_session():
         try:
-            sr = await session.execute(select(User).where(User.tg_id == sender_id))
+            sr = await session.execute(select(User).where(User.tg_id == sender_id).with_for_update())
             sender = sr.scalar_one_or_none()
-            rr = await session.execute(select(User).where(User.tg_id == recipient_id))
+            rr = await session.execute(select(User).where(User.tg_id == recipient_id).with_for_update())
             recipient = rr.scalar_one_or_none()
 
             if not sender or not recipient:

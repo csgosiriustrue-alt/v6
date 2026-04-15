@@ -131,7 +131,7 @@ async def sell_genes_handler(call: CallbackQuery) -> None:
     db = get_db()
     async for session in db.get_session():
         try:
-            user_r = await session.execute(select(User).where(User.tg_id == user_id))
+            user_r = await session.execute(select(User).where(User.tg_id == user_id).with_for_update())
             user = user_r.scalar_one_or_none()
             if not user:
                 await call.answer("❌", show_alert=True)
