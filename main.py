@@ -10,7 +10,7 @@ from handlers import admin_shop
 
 from config import BOT_TOKEN, DATABASE_URL
 from database import init_database, get_db
-from handlers import user, box, shop, stats, admin, casino, robbery, inline_router, safe
+from handlers import user, box, shop, stats, admin, casino, robbery, inline_router, safe, game_21
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,6 +50,7 @@ dp = Dispatcher()
 dp.message.middleware(ChatTrackingMiddleware())
 
 dp.include_router(inline_router.router)
+dp.include_router(game_21.router)
 dp.include_router(casino.router)
 dp.include_router(user.router)
 dp.include_router(safe.router)
