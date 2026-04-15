@@ -2219,12 +2219,12 @@ async def _loot_safe(session, robber_id, victim):
     old_level = -1  # -1 означает «не инициализировано»
     new_levels: list[int] = []
     loot_percent = SAFE_LOOT_COIN_PERCENT  # default fallback
-    safe_destroyed = True  # По умолчанию сейф уничтожается
 
     is_elite_first_crack = (
         victim.safe_type == "elite"
         and victim.elite_safe_health >= 2
     )
+    safe_destroyed = not is_elite_first_crack
 
     if victim.hidden_item_ids:
         for iid in list(victim.hidden_item_ids):
@@ -2252,11 +2252,9 @@ async def _loot_safe(session, robber_id, victim):
             lines.append(f"💰 {stolen:,}🪙 ({loot_percent * 100:.0f}%)")
         if is_elite_first_crack:
             # Первый взлом элитного сейфа: остаток остаётся в сейфе
+            victim.hidden_coins = returned
             if returned > 0:
-                victim.hidden_coins = returned
                 lines.append(f"↩️ {returned:,}🪙 остались в повреждённом сейфе ({100 - loot_percent * 100:.0f}%)")
-            else:
-                victim.hidden_coins = 0
         else:
             if returned > 0:
                 victim.balance_vv += returned
@@ -2267,13 +2265,11 @@ async def _loot_safe(session, robber_id, victim):
         # Первый взлом: сейф повреждён, но не уничтожен
         victim.elite_safe_health = 1
         victim.safe_code = generate_safe_code()
-        safe_destroyed = False
     else:
         # Второй взлом элитного сейфа или любой взлом ржавого: уничтожаем
         if victim.safe_type == "elite":
             victim.elite_safe_health = 0
         destroy_safe(victim)
-        safe_destroyed = True
 
     _safe_fail_tracker.pop(victim.tg_id, None)
 
