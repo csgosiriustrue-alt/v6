@@ -210,14 +210,18 @@ def _build_lvl_text(new_levels: list[int]) -> str:
 # ============================================================================
 # БЛОКИРОВКА ЖЕРТВЫ (с таймаутом)
 # ============================================================================
-_victim_locks: dict[int, tuple[int, float]] = {}  # victim_id → (robber_id, timestamp)
+_victim_locks: dict[int, tuple[int, float]] = {}  # victim_id → (robber_id, monotonic timestamp)
+
+
+def _is_lock_expired(locked_at: float) -> bool:
+    """Проверяет, истёк ли таймаут блокировки (monotonic time)."""
+    return time.monotonic() - locked_at > VICTIM_LOCK_TIMEOUT_SECONDS
 
 
 def _lock_victim(victim_id: int, robber_id: int) -> bool:
     if victim_id in _victim_locks:
         locked_robber, locked_at = _victim_locks[victim_id]
-        # Автоматически снимаем просроченную блокировку
-        if time.monotonic() - locked_at > VICTIM_LOCK_TIMEOUT_SECONDS:
+        if _is_lock_expired(locked_at):
             logger.warning(f"⏰ Автоснятие просроченной блокировки жертвы {victim_id} (грабитель {locked_robber})")
             _victim_locks.pop(victim_id, None)
         elif locked_robber == robber_id:
@@ -239,8 +243,7 @@ def _is_victim_locked(victim_id: int, robber_id: int) -> bool:
     if entry is None:
         return False
     locked_robber, locked_at = entry
-    # Автоматически снимаем просроченную блокировку
-    if time.monotonic() - locked_at > VICTIM_LOCK_TIMEOUT_SECONDS:
+    if _is_lock_expired(locked_at):
         _victim_locks.pop(victim_id, None)
         return False
     return locked_robber != robber_id

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 SAFE_COIN_AMOUNTS = [10_000, 50_000, 100_000, 250_000, 500_000]
+MAX_SAFE_MANUAL_AMOUNT = 1_000_000_000  # Максимальная сумма ручного ввода
 
 
 class SafeStates(StatesGroup):
@@ -749,7 +750,7 @@ async def safe_deposit_manual_input(message: Message, state: FSMContext) -> None
         return
 
     amount = int(text)
-    if amount > 1_000_000_000:
+    if amount > MAX_SAFE_MANUAL_AMOUNT:
         await message.answer("❌ Слишком большая сумма!", reply_markup=get_main_keyboard())
         return
     await state.clear()
@@ -959,7 +960,7 @@ async def safe_withdraw_manual_input(message: Message, state: FSMContext) -> Non
         return
 
     amount = int(text)
-    if amount > 1_000_000_000:
+    if amount > MAX_SAFE_MANUAL_AMOUNT:
         await message.answer("❌ Слишком большая сумма!", reply_markup=get_main_keyboard())
         return
     await state.clear()
