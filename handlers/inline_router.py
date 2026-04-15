@@ -13,6 +13,7 @@ from database import get_db
 from models import User, MAX_BOX_COUNT
 from handlers.casino import casino_inline_handler, casino_chosen_result
 from handlers.robbery import robbery_inline_handler, robbery_chosen_result
+from handlers.game_21 import bj_inline_handler, bj_chosen_result
 from handlers.user import build_profile_text
 from utils.keyboards import get_box_keyboard
 from utils.box_utils import update_user_boxes, get_time_until_next_box
@@ -419,13 +420,13 @@ async def global_inline_handler(inline_query: InlineQuery) -> None:
         await robbery_inline_handler(inline_query)
         return
 
-    # Число: ID (>1 000 000) → ограбление, иначе → казино
+    # Число: ID (>1 000 000) → ограбление, иначе → казино + блэкджек на выбор
     if query.isdigit():
         num = int(query)
         if num > 1_000_000:
             await robbery_inline_handler(inline_query)
         else:
-            await casino_inline_handler(inline_query)
+            await bj_inline_handler(inline_query)
         return
 
     # Пустой запрос — подсказки
@@ -442,6 +443,8 @@ async def global_chosen_handler(chosen: ChosenInlineResult) -> None:
     rid = chosen.result_id or ""
     if rid.startswith("casino_"):
         await casino_chosen_result(chosen)
+    elif rid.startswith("bj_"):
+        await bj_chosen_result(chosen)
     elif rid.startswith("rob_"):
         await robbery_chosen_result(chosen)
     elif rid.startswith("transfer_"):
