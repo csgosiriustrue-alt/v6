@@ -39,6 +39,7 @@ class Database:
             # ── Новые миграции: уровни сейфов ──
             ("users", "safe_level_rusty", "ALTER TABLE users ADD COLUMN safe_level_rusty INTEGER NOT NULL DEFAULT 1"),
             ("users", "safe_level_elite", "ALTER TABLE users ADD COLUMN safe_level_elite INTEGER NOT NULL DEFAULT 1"),
+            ("users", "notifications_enabled", "ALTER TABLE users ADD COLUMN notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE"),
         ]
 
         async with self.engine.begin() as conn:
