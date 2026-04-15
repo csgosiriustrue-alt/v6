@@ -427,6 +427,12 @@ async def safe_put_item_list(call: CallbackQuery) -> None:
                 await call.answer("❌ Нет сейфа!", show_alert=True)
                 return
 
+            if user.is_being_robbed:
+                await call.answer(
+                    "⛔ Вы не можете распоряжаться финансами, пока вас грабят!",
+                    show_alert=True)
+                return
+
             if user.hidden_items_count() >= user.safe_item_limit():
                 await call.answer("❌ Сейф заполнен!", show_alert=True)
                 return
@@ -496,6 +502,16 @@ async def safe_hide_item(call: CallbackQuery) -> None:
         try:
             user_result = await session.execute(select(User).where(User.tg_id == user_id))
             user = user_result.scalar_one_or_none()
+
+            if not user:
+                await call.answer("❌ Пользователь не найден!", show_alert=True)
+                return
+
+            if user.is_being_robbed:
+                await call.answer(
+                    "⛔ Вы не можете распоряжаться финансами, пока вас грабят!",
+                    show_alert=True)
+                return
 
             success, msg = await put_item_in_safe(session, user, item_id)
             if success:
@@ -636,6 +652,12 @@ async def safe_put_coins_menu(call: CallbackQuery, state: FSMContext) -> None:
                 await call.answer("❌ Нет сейфа!", show_alert=True)
                 return
 
+            if user.is_being_robbed:
+                await call.answer(
+                    "⛔ Вы не можете распоряжаться финансами, пока вас грабят!",
+                    show_alert=True)
+                return
+
             space = user.safe_coin_limit() - user.hidden_coins
 
             buttons = []
@@ -678,6 +700,23 @@ async def safe_deposit_manual_start(call: CallbackQuery, state: FSMContext) -> N
     if call.from_user.id != user_id:
         await call.answer("❌ Это не ваш сейф!", show_alert=True)
         return
+
+    db = get_db()
+    async for session in db.get_session():
+        try:
+            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user = user_result.scalar_one_or_none()
+            if user and user.is_being_robbed:
+                await call.answer(
+                    "⛔ Вы не можете распоряжаться финансами, пока вас грабят!",
+                    show_alert=True)
+                return
+        except Exception as e:
+            logger.error(f"❌ safe_deposit_manual_start: {e}")
+            await call.answer("❌ Ошибка", show_alert=True)
+            return
+        finally:
+            await session.close()
 
     await state.set_state(SafeStates.waiting_deposit_amount)
     await state.update_data(user_id=user_id)
@@ -722,6 +761,12 @@ async def safe_deposit_manual_input(message: Message, state: FSMContext) -> None
                 await message.answer("❌ Нет сейфа!", reply_markup=get_main_keyboard())
                 return
 
+            if user.is_being_robbed:
+                await message.answer(
+                    "⛔ <b>Вы не можете распоряжаться финансами, пока вас грабят!</b>",
+                    parse_mode="HTML", reply_markup=get_main_keyboard())
+                return
+
             success, msg = await put_coins_in_safe(session, user, amount)
             if success:
                 await session.commit()
@@ -761,6 +806,12 @@ async def safe_deposit_coins(call: CallbackQuery) -> None:
         try:
             user_result = await session.execute(select(User).where(User.tg_id == user_id))
             user = user_result.scalar_one_or_none()
+
+            if user and user.is_being_robbed:
+                await call.answer(
+                    "⛔ Вы не можете распоряжаться финансами, пока вас грабят!",
+                    show_alert=True)
+                return
 
             success, msg = await put_coins_in_safe(session, user, amount)
             if success:
@@ -853,6 +904,23 @@ async def safe_withdraw_manual_start(call: CallbackQuery, state: FSMContext) -> 
     if call.from_user.id != user_id:
         await call.answer("❌ Это не ваш сейф!", show_alert=True)
         return
+
+    db = get_db()
+    async for session in db.get_session():
+        try:
+            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user = user_result.scalar_one_or_none()
+            if user and user.is_being_robbed:
+                await call.answer(
+                    "⛔ Вы не можете распоряжаться финансами, пока вас грабят!",
+                    show_alert=True)
+                return
+        except Exception as e:
+            logger.error(f"❌ safe_withdraw_manual_start: {e}")
+            await call.answer("❌ Ошибка", show_alert=True)
+            return
+        finally:
+            await session.close()
 
     await state.set_state(SafeStates.waiting_withdraw_amount)
     await state.update_data(user_id=user_id)
