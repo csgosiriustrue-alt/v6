@@ -21,7 +21,6 @@ class SafeTypeEnum(PyEnum):
     RUSTY = "rusty"
     ELITE = "elite"
 
-
 MAX_BOX_COUNT = 10
 BOX_REFILL_HOURS = 2
 MAX_DAILY_BETS = 25
@@ -110,6 +109,9 @@ class User(Base):
     # ── Блокировка: вор (мульти-грабёж) ──
     is_robbing_now: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     robbing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # ── Уведомления ──
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     inventory: Mapped[list["Inventory"]] = relationship(
         "Inventory", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
