@@ -275,6 +275,18 @@ async def open_box_handler(call: CallbackQuery) -> None:
                 items, pollution = await _roll_items(session, user)
                 if not items:
                     logger.warning(f"✊ {user_id}: нет предметов для выдачи")
+                    err_text = "❌ <b>Нет предметов для выдачи.</b>"
+                    if has_inline_id:
+                        try:
+                            await call.bot.edit_message_text(text=err_text,
+                                inline_message_id=call.inline_message_id, parse_mode="HTML")
+                        except Exception:
+                            pass
+                    elif has_message:
+                        try:
+                            await call.message.edit_text(err_text, parse_mode="HTML")
+                        except Exception:
+                            pass
                     return
 
                 await _add_items_to_inv(session, user_id, items)
