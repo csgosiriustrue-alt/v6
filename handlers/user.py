@@ -103,7 +103,13 @@ async def build_profile_text(user_id: int, session) -> str:
     if user.has_active_safe():
         level = user.get_safe_level()
         if user.safe_type == "elite":
-            safe_text = f"🏦 Элитный ур.{level} (🛡 Вечный)"
+            health = user.elite_safe_health
+            if health >= 2:
+                safe_text = f"🏦 Элитный ур.{level} (🟢 2/2)"
+            elif health == 1:
+                safe_text = f"🏦 Элитный ур.{level} (🟡 1/2)"
+            else:
+                safe_text = f"🏦 Элитный ур.{level} (🔴 0/2)"
         else:
             safe_text = f"🧰 Ржавый ур.{level} (❤️ {user.safe_health}/3)"
 

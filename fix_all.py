@@ -18,6 +18,8 @@ MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS roof_until TIMESTAMP",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS black_market_until TIMESTAMP",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_market_check DATE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS elite_safe_health INTEGER DEFAULT 2",
+    "UPDATE users SET elite_safe_health = 2 WHERE safe_type = 'elite' AND elite_safe_health = 0",
 
     # Items
     "ALTER TABLE items ADD COLUMN IF NOT EXISTS max_in_inventory INTEGER DEFAULT 0",
