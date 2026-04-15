@@ -1,7 +1,7 @@
 import logging
 import random
 from datetime import datetime, timedelta
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import User, Inventory, Item
@@ -12,6 +12,13 @@ HAZBIK_DURATION_MINUTES = 15
 
 # Названия сейфов — эти предметы НЕ хранятся в Inventory, а активируются через поля User
 SAFE_ITEM_NAMES = {"Ржавый Сейф", "Элитный Сейф"}
+
+# Все активируемые предметы, которые НЕ должны храниться в Inventory
+PHANTOM_ACTIVATABLE_NAMES = {
+    "Ржавый Сейф", "Элитный Сейф",
+    "Охрана", "Крыша",
+    "Журнал для взрослых", "Резиновая кукла", "Путана",
+}
 
 
 def generate_safe_code() -> str:
@@ -115,6 +122,21 @@ async def _cleanup_safe_inventory(session: AsyncSession, user_id: int) -> None:
             if inv:
                 await session.delete(inv)
                 logger.info(f"🧹 Фантомный сейф '{safe_name}' удалён из Inventory: user={user_id}")
+
+
+async def cleanup_phantom_inventory(session: AsyncSession, user_id: int) -> None:
+    """Удаляет все фантомные активируемые предметы из Inventory пользователя.
+
+    Эти предметы (сейфы, бусты, охрана, крыша) активируются через поля User
+    и не должны храниться в таблице Inventory.
+    """
+    phantom_subq = select(Item.id).where(Item.name.in_(PHANTOM_ACTIVATABLE_NAMES))
+    await session.execute(
+        delete(Inventory).where(
+            Inventory.user_id == user_id,
+            Inventory.item_id.in_(phantom_subq),
+        )
+    )
 
 
 async def put_item_in_safe(session: AsyncSession, user: User, item_id: int) -> tuple[bool, str]:
