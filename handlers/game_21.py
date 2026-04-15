@@ -516,7 +516,6 @@ async def bj_hit_handler(call: CallbackQuery) -> None:
                         f"🏦 В общак (50%): <b>+{pa:,} 🪙</b>\n"
                         f"🔥 Сгорело (50%): <b>{burned:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
-                        f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
                         f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
                 except Exception as e:
@@ -658,7 +657,6 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                         f"{outcome}\n"
                         f"🎉 Получено: <b>+{winnings:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
-                        f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
                         f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
 
@@ -681,7 +679,6 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                         f"🤝 <b>Ничья!</b> Ставка возвращена.\n"
                         f"💰 Возврат: <b>{bet:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
-                        f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
                         f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
 
@@ -707,7 +704,6 @@ async def bj_stand_handler(call: CallbackQuery) -> None:
                         f"🏦 В общак (50%): <b>+{pa:,} 🪙</b>\n"
                         f"🔥 Сгорело (50%): <b>{burned:,} 🪙</b>\n\n"
                         f"💼 Баланс: <b>{balance:,} 🪙</b>\n"
-                        f"🏦 Общак: <b>{pot:,} 🪙</b>\n"
                         f"🃏 Игры: {remaining}/{MAX_DAILY_BJ}"
                     )
             except Exception as e:
@@ -794,7 +790,7 @@ async def bj_again_handler(call: CallbackQuery) -> None:
                         if "MessageNotModified" not in str(e):
                             logger.error(f"❌ bj again no funds: {e}")
                     return
-                if not user.use_casino_bet():
+                if not user.use_bj_game():
                     try:
                         await call.bot.edit_message_text(
                             text=f"❌ <b>Лимит игр в блэкджек!</b> {MAX_DAILY_BJ}/день",
